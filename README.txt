@@ -9,6 +9,12 @@ I build up the library to use it with the Arduino Z21pg central station: http://
 
 ===========
 
+Compared to upstream the following has been changed: 
+* compatibility for ESP32C3
+* conditional compilation for ESP Cores 2.x and 3.x for Arduino
+* some minor cleanup of if then else structures
+* indentation fixes
+
 modified by Philipp Gahtow 2015-2021 digitalmoba@arcor.de
 * - add a store for active loco, so you can request the actual state
 * - add a store for BasicAccessory states
@@ -31,3 +37,4 @@ modified by Philipp Gahtow 2015-2021 digitalmoba@arcor.de
 
 To install, see the general instructions for Arduino library installation here:
 http://arduino.cc/en/Guide/Environment#libraries
+

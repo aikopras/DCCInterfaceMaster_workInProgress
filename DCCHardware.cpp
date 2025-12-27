@@ -481,14 +481,23 @@ void setup_DCC_waveform_generator() {
 	
 	/******************************************/
 	#if defined(ESP32)			//ESP32 Modul
+	#if ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
+	/* ESP Arduino core 3.x
+	 */
+	/* Use auto allocated timer of 4 */
+	/* 1 tick takes 1us = 1MHz */
+	timer = timerBegin(1000000); // ESP core 3.x, old ESP core 2.x was: DCC_ESP_TIMER_ID, DCC_ESP_TIMER_PRESCALE, DCC_ESP_TIMER_FLAG);
+	#else
+	/* ESP Arduino core 2.x
+	 */
 	/* Use 1st timer of 4 */
 	/* 1 tick take 1/(80MHZ/80) = 1us so we set divider 80 and count up */
 	timer = timerBegin(DCC_ESP_TIMER_ID, DCC_ESP_TIMER_PRESCALE, DCC_ESP_TIMER_FLAG);
-	
+	#endif
+
 	/* Set alarm to call onTimer function every second 1 tick is 1us => 1 second is 1000000us */
 	/* Repeat the alarm (third parameter) */
-	timerAttachInterrupt(timer, &onTimerISR, true);
-	
+	// moved to section Enable the Interrupt (all MCUs): // timerAttachInterrupt(timer, &onTimerISR); // ESP core 3.x
 
 	DCC_TMR_OUTP_ONE_COUNT(); //start output "1"
 
@@ -540,7 +549,15 @@ void setup_DCC_waveform_generator() {
 	timer1_attachInterrupt(onTimerISR);
 	
 	#elif defined(ESP32)	//ESP32
+	#if ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
+	// Code for version 3.x
+	// nop
+	#else
+	/* ESP Arduino core 2.x
+	 */
 	timerAlarmEnable(timer);
+	#endif
+	timerAttachInterrupt(timer, &onTimerISR); // for ESP core 2.x and 3.x
 	
 	#else	//Arduino DUE
 	NVIC_EnableIRQ(DCC_ARM_MATCH_INT);	

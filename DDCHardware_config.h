@@ -114,10 +114,29 @@ Dauer des Teil-Nullbits: t ≥ 100 µs, normal: 116µs
 #define DCC_ESP_TIMER_ID		 1		//the Timer number from 0 to 3
 #define DCC_ESP_TIMER_PRESCALE	 4		//prescale the value of the time divider
 #define DCC_ESP_TIMER_FLAG		 true	//flag true to count on the rising edge, false to count on the falling edge
-#define DCC_TMR_OUTP_ONE_HALF()  {timerAlarmWrite(timer, half_one_count, true); last_timer = half_one_count;}	
-#define DCC_TMR_OUTP_ONE_COUNT() {timerAlarmWrite(timer, one_count, true); last_timer = one_count;}	
-#define DCC_TMR_OUTP_ZERO_HIGH() {timerAlarmWrite(timer, zero_high_count, true); last_timer = zero_high_count;}    
-#define DCC_TMR_OUTP_ZERO_LOW()  {timerAlarmWrite(timer, zero_low_count, true); last_timer = zero_low_count;} 
+
+#if ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
+/* ESP Arduino core 3.x
+ * from ESP 3.x docu:
+ * void timerAlarm(hw_timer_t * timer, uint64_t alarm_value, bool autoreload, uint64_t reload_count);
+ */
+#define DCC_TMR_OUTP_ONE_HALF()  {timerAlarm(timer, half_one_count, true, 0); last_timer = half_one_count;}
+#define DCC_TMR_OUTP_ONE_COUNT() {timerAlarm(timer, one_count, true, 0); last_timer = one_count;}
+#define DCC_TMR_OUTP_ZERO_HIGH() {timerAlarm(timer, zero_high_count, true, 0); last_timer = zero_high_count;}
+#define DCC_TMR_OUTP_ZERO_LOW()  {timerAlarm(timer, zero_low_count, true, 0); last_timer = zero_low_count;}
+#else
+/* ESP Arduino core 2.x
+ * from ESP 2.x docu:
+ * void timerAlarmWrite(hw_timer_t *timer, uint64_t alarm_value, bool autoreload);
+ * void timerAlarmEnable(hw_timer_t *timer);
+ */
+#define DCC_TMR_OUTP_ONE_HALF()  {timerAlarmWrite(timer, half_one_count, true); last_timer = half_one_count;}
+#define DCC_TMR_OUTP_ONE_COUNT() {timerAlarmWrite(timer, one_count, true); last_timer = one_count;}
+#define DCC_TMR_OUTP_ZERO_HIGH() {timerAlarmWrite(timer, zero_high_count, true); last_timer = zero_high_count;}
+#define DCC_TMR_OUTP_ZERO_LOW()  {timerAlarmWrite(timer, zero_low_count, true); last_timer = zero_low_count;}
+#endif
+
+
 
 /******************************************/
 //USE the Timer1 for the DCC Signal generation on AVR
