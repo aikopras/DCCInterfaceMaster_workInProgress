@@ -7,7 +7,7 @@
 *
 */
 
-#include "DCCPacketScheduler.h"
+#include "DCCPacketScheduler_new.h"
 #include "DCCHardware.h"
 #include "DDCHardware_config.h"
 
@@ -39,29 +39,15 @@ z21nvsClass EEPROMDCC;
 #endif
 
 #if defined(ESP32)
-extern portMUX_TYPE timerMux;	
+extern portMUX_TYPE timerMux;
 #endif
 
-/// Request the next packet for the rails
-extern volatile bool get_next_packet; 
-/// The Pin where the DCC Waveform comes out.
-extern uint8_t DCCPin;
-extern uint8_t DCCPin2;
-extern bool RailCom;
-extern uint8_t DCCS88Pin;
-/// The currently queued packet to be put on the rails. Default is a reset packet.
-extern uint8_t current_packet[6];
-/// is in Service Mode:
-extern volatile uint8_t current_packet_service;
-extern volatile uint8_t ProgRepeat;
-/// How many data uint8_ts in the queued packet?
-extern volatile uint8_t current_packet_size;
-/// current status of railcom
-extern volatile uint8_t RailComActiv;
 
-volatile uint16_t current_cv = 0;	//cv that we are working on
-volatile uint8_t current_cv_value = 0;	//value that is read
-volatile uint8_t current_cv_bit = 0xFF;	//bit that will be read - 0xFF = ready, nothing to read!
+uint8_t ProgRepeat = 10;
+
+uint16_t current_cv = 0;	//cv that we are working on
+uint8_t current_cv_value = 0;	//value that is read
+uint8_t current_cv_bit = 0xFF;	//bit that will be read - 0xFF = ready, nothing to read!
 uint8_t cv_read_count = 0;		//count number of cv read
 
 #define NON_PROG_OP 		0x00
@@ -84,7 +70,7 @@ extern hw_timer_t * timer;
 ///////////////////////////////////////////////
 ///////////////////////////////////////////////
 ///////////////////////////////////////////////
-//---------------------------------------------------------------------------------  
+//---------------------------------------------------------------------------------
 DCCPacketScheduler::DCCPacketScheduler(void) : /*default_speed_steps(128),*/ /*last_packet_address(255),*/ packet_counter(1)
 {
   e_stop_queue.setup(E_STOP_QUEUE_SIZE);	//just to send once for set repeat circle
@@ -101,25 +87,25 @@ DCCPacketScheduler::DCCPacketScheduler(void) : /*default_speed_steps(128),*/ /*l
 void DCCPacketScheduler::setup(uint8_t pin, uint8_t pin2, uint8_t steps, uint8_t format, uint8_t power) //for any post-constructor initialization
 {
 	loadEEPROMconfig();	//load the configuration
-	
-	DCCPin = pin;	//set DCC Waveform pin
-	DCCPin2 = pin2;	//set inverted DCC Waveform pin2
-	DCCS88Pin = 0xFF;	//disable per default
-	
-	setup_DCC_waveform_generator();	//Timer neu configurieren
-	
+
+	dccPacketEngine.dccRailPin = pin;	//set DCC Waveform pin
+	dccPacketEngine.dccRailInvPin = pin2;	//set inverted DCC Waveform pin2
+	dccPacketEngine.dccMonitorPin = 0xFF;	//disable per default
+
+	dccPacketEngine.setupWaveformGenerator();	//Timer neu configurieren
+
 	#if defined(__SAM3X8E__)
 	TC_Start(DCC_ARM_TC_TIMER, DCC_ARM_TC_CHANNEL);
 	#elif defined(ESP8266) 	//ESP8266
 	timer1_enable(DCC_ESP_TIMER_DIV, DCC_ESP_TIMER_SET, DCC_ESP_TIMER_LOOP);
-	#endif	
-	
+	#endif
+
 	setpower(power, true);	//DCC signal on (active) and inform other over the new power state!
-	
+
 	slotFullNext = 0;	//don't override, start with free slots
 	TrntFormat = format;	//The way BasicAccessory Messages Addressing works (Intellbox/ROCO/etc)
 	DCCdefaultSteps = steps;
-	
+
 	ProgState = ProgStart;	//default Direct CV Zustand
 
 	//Following RP 9.2.4, begin by putting 20 reset packets and 10 idle packets on the rails.
@@ -139,8 +125,8 @@ void DCCPacketScheduler::setup(uint8_t pin, uint8_t pin2, uint8_t steps, uint8_t
 //extra DCC signal for S88/LocoNet without Shutdown and Railcom
 void DCCPacketScheduler::enable_additional_DCC_output(uint8_t pin)
 {
-	DCCS88Pin = pin;		//set PIN for S88/LocoNet true DCC output
-	setup_DCC_waveform_generator();	//Timer neu configurieren
+	dccPacketEngine.dccMonitorPin = pin;		//set PIN for S88/LocoNet true DCC output
+	dccPacketEngine.setupWaveformGenerator();	//Timer neu configurieren
 }
 //---------------------------------------------------------------------------------
 void DCCPacketScheduler::disable_additional_DCC_output(void)
@@ -153,25 +139,26 @@ void DCCPacketScheduler::loadEEPROMconfig(void)
 {
 	if (FSTORAGE.read(EEPROMRailCom) > 1)
 		FSTORAGE.FSTORAGEMODE(EEPROMRailCom,0x01);	//Default activ
-	
+
 	if (FSTORAGE.read(EEPROMProgReadMode) > 3)
 		FSTORAGE.FSTORAGEMODE(EEPROMProgReadMode,0x03);	//Default "Beides"
-	
+
 	if ((FSTORAGE.read(EEPROMProgRepeat) > 64) | (FSTORAGE.read(EEPROMRSTcRepeat) > 64)) {
 		FSTORAGE.FSTORAGEMODE(EEPROMProgRepeat,OPS_MODE_PROGRAMMING_REPEAT);	//range 7-64
 		FSTORAGE.FSTORAGEMODE(EEPROMRSTsRepeat,RESET_START_REPEAT);		//range 25-255
 		FSTORAGE.FSTORAGEMODE(EEPROMRSTcRepeat,RESET_CONT_REPEAT);		//range 6-64
 	}
-	
+
 	#if defined(ESP8266) || defined(ESP32) //ESP8266 or ESP32
 	FSTORAGE.commit();
 	#endif
-	
-	RailCom = FSTORAGE.read(EEPROMRailCom);	//define if railcom cutout is active	
-	ProgReadMode = FSTORAGE.read(EEPROMProgReadMode);	//Auslese-Modus: 0=Nichts, 1=Bit, 2=Byte, 3=Beides
-	ProgRepeat = FSTORAGE.read(EEPROMProgRepeat);	//Repaet for Packet Programming
-	RSTsRepeat = FSTORAGE.read(EEPROMRSTsRepeat);	//Repaet for Reset start Packet
-	RSTcRepeat = FSTORAGE.read(EEPROMRSTcRepeat);	//Repaet for Reset contingue Packet
+
+	dccPacketEngine.railCom = FSTORAGE.read(EEPROMRailCom);	//define if railcom cutout is active
+	ProgReadMode = FSTORAGE.read(EEPROMProgReadMode);	  // Auslese-Modus: 0=Nichts, 1=Bit, 2=Byte, 3=Beides
+	ProgRepeat = FSTORAGE.read(EEPROMProgRepeat);	      // Repaet for Packet Programming
+	RSTsRepeat = FSTORAGE.read(EEPROMRSTsRepeat);	      // Repaet for Reset start Packet
+	RSTcRepeat = FSTORAGE.read(EEPROMRSTcRepeat);	      // Repaet for Reset contingue Packet
+  dccPacketEngine.serviceModeRepeat = ProgRepeat;          // Repeat for SM packets is done by the ISR itself
 }
 
 //---------------------------------------------------------------------------------
@@ -181,14 +168,13 @@ void DCCPacketScheduler::setpower(uint8_t state, bool notify)
 	if (railpower != state) {
 		railpower = state;	//save the state of the railpower
 		if (state == OFF || state == SHORT) {
-
-			DCC_stop_output_signal();	//RailPower-Signal generate OFF
-			
+			//RailPower-Signal generate OFF
+      dccPacketEngine.StopOutputSignal();
 		}
 		else {
-			DCC_run_output_signal(); 	//generate RailPower-Signal
+			//generate RailPower-Signal
+      dccPacketEngine.RunOutputSignal();
 		}
-		
 		if (notifyRailpower && notify)
 			notifyRailpower(railpower);
 	}
@@ -198,23 +184,23 @@ void DCCPacketScheduler::setpower(uint8_t state, bool notify)
 //get the actual state of power
 byte DCCPacketScheduler::getpower(void)
 {
-	return railpower;	
+	return railpower;
 }
 
 //---------------------------------------------------------------------------------
 //to de-/activate RailCom cutout rail output
-void DCCPacketScheduler::setrailcom(bool rc) 
+void DCCPacketScheduler::setrailcom(bool rc)
 {
-	RailCom = rc;
-}	
+	dccPacketEngine.railCom = rc;
+}
 
 //---------------------------------------------------------------------------------
 //return the State of RailCom cutout output
-bool DCCPacketScheduler::getrailcom(void) 
+bool DCCPacketScheduler::getrailcom(void)
 {
-	return RailCom;
+	return dccPacketEngine.railCom;
 }
-	
+
 //---------------------------------------------------------------------------------
 bool DCCPacketScheduler::setSpeed(uint16_t address, uint8_t speed)
 {
@@ -240,8 +226,8 @@ bool DCCPacketScheduler::setSpeed14(uint16_t address, uint8_t speed)
 	byte slot = LokStsgetSlot(address);
 	LokDataUpdate[slot].speed = speed;	//write Dir and Speed into register to SAVE
 	if ((LokDataUpdate[slot].adr >> 14) != DCC14)  //0=>14steps, write speed steps into register
-		LokDataUpdate[slot].adr = (LokDataUpdate[slot].adr & 0x3FFF) | (DCC14 << 14);		
-  
+		LokDataUpdate[slot].adr = (LokDataUpdate[slot].adr & 0x3FFF) | (DCC14 << 14);
+
 	uint8_t speed_data_uint8_ts[] = {0x40};		//speed indecator
 	/*
     if (speed == 1) //estop!
@@ -255,13 +241,13 @@ bool DCCPacketScheduler::setSpeed14(uint16_t address, uint8_t speed)
 	*/
 	speed_data_uint8_ts[0] |= speed & 0x1F;			//5 Bit Speed
 	speed_data_uint8_ts[0] |= (speed & 0x80) >> 2;	//Dir
-	
+
     DCCPacket p(address);
     p.addData(speed_data_uint8_ts,1);
 
     p.setRepeat(SPEED_REPEAT);
-  
-    p.setKind(speed_packet_kind);  
+
+    p.setKind(speed_packet_kind);
 
     //speed packets get refreshed indefinitely, and so the repeat doesn't need to be set.
     //speed packets go to the high proirity queue
@@ -278,7 +264,7 @@ bool DCCPacketScheduler::setSpeed28(uint16_t address, uint8_t speed)
 		return false;
 
   byte slot = LokStsgetSlot(address);
-  LokDataUpdate[slot].speed = speed;		// speed & B01111111 + Dir;	//write into register to SAVE
+  LokDataUpdate[slot].speed = speed;		// speed & 0b01111111 + Dir;	//write into register to SAVE
   if ((LokDataUpdate[slot].adr >> 14) != DCC28)	//2=>28steps, write into register
 	LokDataUpdate[slot].adr = (LokDataUpdate[slot].adr & 0x3FFF) | (DCC28 << 14);
 
@@ -291,7 +277,7 @@ bool DCCPacketScheduler::setSpeed28(uint16_t address, uint8_t speed)
     speed_data_uint8_ts[0] |= 0x00; //stop
   else //movement
   {
-    speed_data_uint8_ts[0] |= map(speed, 2, 127, 2, 0x1F); //convert from [2-127] to [2-31]  
+    speed_data_uint8_ts[0] |= map(speed, 2, 127, 2, 0x1F); //convert from [2-127] to [2-31]
     //most least significant bit has to be shufled around
     speed_data_uint8_ts[0] = (speed_data_uint8_ts[0]&0xE0) | ((speed_data_uint8_ts[0]&0x1F) >> 1) | ((speed_data_uint8_ts[0]&0x01) << 4);
   }
@@ -299,14 +285,14 @@ bool DCCPacketScheduler::setSpeed28(uint16_t address, uint8_t speed)
   */
   speed_data_uint8_ts[0] |= speed & 0x1F;			//5 Bit Speed
   speed_data_uint8_ts[0] |= (speed & 0x80) >> 2;	//Dir
-	
+
   DCCPacket p(address);
   p.addData(speed_data_uint8_ts,1);
-  
+
   p.setRepeat(SPEED_REPEAT);
-  
+
   p.setKind(speed_packet_kind);
-  
+
   //speed packets get refreshed indefinitely, and so the repeat doesn't need to be set.
   //speed packets go to the high proirity queue
   //return(high_priority_queue.insertPacket(&p));
@@ -331,7 +317,7 @@ bool DCCPacketScheduler::setSpeed128(uint16_t address, uint8_t speed)
 
 //	if (speed == 1) //estop!
 //		return eStop(address);//speed_data_uint8_ts[1] |= 0x01; //estop
-	//else 
+	//else
 		speed_data_uint8_ts[1] = speed; //no conversion necessary.
 
 	//why do we get things like this?
@@ -357,11 +343,11 @@ bool DCCPacketScheduler::setSpeed128(uint16_t address, uint8_t speed)
 //Lokfunktion setzten
 void DCCPacketScheduler::setLocoFunc(uint16_t address, uint8_t type, uint8_t fkt)
 {			//type => 0 = AUS; 1 = EIN; 2 = UM; 3 = error
-	bool fktbit = 0;	//neue zu ändernde fkt bit
+	bool fktbit = 0;	//neue zu ï¿½ndernde fkt bit
 	if (type == 1)	//ein
 		fktbit = 1;
 	byte Slot = LokStsgetSlot(address);
-	//zu änderndes bit bestimmen und neu setzten:
+	//zu ï¿½nderndes bit bestimmen und neu setzten:
 	if (fkt <= 4) {
 		byte func = LokDataUpdate[Slot].f0 & 0x1F;	//letztes Zustand der Funktionen 000 F0 F4..F1
 		if (type == 2) { //um
@@ -414,7 +400,7 @@ void DCCPacketScheduler::setLocoFunc(uint16_t address, uint8_t type, uint8_t fkt
 			fktbit = !(bitRead(func, fkt - 29));
 		bitWrite(func, fkt - 29, fktbit);
 		//Daten senden:
-		setFunctions29to36(address, func);	
+		setFunctions29to36(address, func);
 	}
 	else if ((fkt >= 37) && (fkt <= 44)) {
 		byte func = 0; //LokDataUpdate[Slot].f5;
@@ -422,7 +408,7 @@ void DCCPacketScheduler::setLocoFunc(uint16_t address, uint8_t type, uint8_t fkt
 			fktbit = !(bitRead(func, fkt - 37));
 		bitWrite(func, fkt - 37, fktbit);
 		//Daten senden:
-		setFunctions37to44(address, func);	
+		setFunctions37to44(address, func);
 	}
 	else if ((fkt >= 45) && (fkt <= 52)) {
 		byte func = 0; //LokDataUpdate[Slot].f6;
@@ -430,7 +416,7 @@ void DCCPacketScheduler::setLocoFunc(uint16_t address, uint8_t type, uint8_t fkt
 			fktbit = !(bitRead(func, fkt - 45));
 		bitWrite(func, fkt - 45, fktbit);
 		//Daten senden:
-		setFunctions45to52(address, func);	
+		setFunctions45to52(address, func);
 	}
 	else if ((fkt >= 53) && (fkt <= 60)) {
 		byte func = 0; //LokDataUpdate[Slot].f7;
@@ -438,7 +424,7 @@ void DCCPacketScheduler::setLocoFunc(uint16_t address, uint8_t type, uint8_t fkt
 			fktbit = !(bitRead(func, fkt - 53));
 		bitWrite(func, fkt - 53, fktbit);
 		//Daten senden:
-		setFunctions53to60(address, func);	
+		setFunctions53to60(address, func);
 	}
 	else if ((fkt >= 61) && (fkt <= 68)) {
 		byte func = 0; //LokDataUpdate[Slot].f8;
@@ -446,31 +432,31 @@ void DCCPacketScheduler::setLocoFunc(uint16_t address, uint8_t type, uint8_t fkt
 			fktbit = !(bitRead(func, fkt - 61));
 		bitWrite(func, fkt - 61, fktbit);
 		//Daten senden:
-		setFunctions61to68(address, func);	
+		setFunctions61to68(address, func);
 	}
 	#endif
-}	
+}
 
 //--------------------------------------------------------------------------------------------
 //Lokfunktion Binary State setzten
 void DCCPacketScheduler::setLocoFuncBinary(uint16_t address, uint8_t low, uint8_t high) {
 	/*	Preamble | 0AAA-AAAA | AAAA-AAAA | 110xxxxx | FLLL LLLL | HHHH HHHH | Err.Det.B
-		F Das oberste Bit F legt fest, ob der Binärzustand eingeschaltet oder ausgeschaltet ist.
-		LLLLLLL Die niederwertigen sieben (!) Bits der Binärzustandsadresse.
-		HHHHHHHH Die die höherwertigen acht Bits der Binärzustandsadresse. 
-		DCC Binärzustandssteuerungsbefehle werden drei Mal am Gleis ausgegeben, 
-		und danach gemäß RCN-212 nicht mehr regelmäßig wiederholt! */
-		
-	if (high == 0) {	//Binärzustandsadressen < 128 ==> kurze Form
-		
-		if ((low & 0x7F) < 29)	//nur Binärzustandsadressen von 29 bis 32767
+		F Das oberste Bit F legt fest, ob der Binï¿½rzustand eingeschaltet oder ausgeschaltet ist.
+		LLLLLLL Die niederwertigen sieben (!) Bits der Binï¿½rzustandsadresse.
+		HHHHHHHH Die die hï¿½herwertigen acht Bits der Binï¿½rzustandsadresse.
+		DCC Binï¿½rzustandssteuerungsbefehle werden drei Mal am Gleis ausgegeben,
+		und danach gemï¿½ï¿½ RCN-212 nicht mehr regelmï¿½ï¿½ig wiederholt! */
+
+	if (high == 0) {	//Binï¿½rzustandsadressen < 128 ==> kurze Form
+
+		if ((low & 0x7F) < 29)	//nur Binï¿½rzustandsadressen von 29 bis 32767
 			return;
-		
-		//Binärzustandssteuerungsbefehl kurze Form: 1101-1101 DLLL-LLLL
+
+		//Binï¿½rzustandssteuerungsbefehl kurze Form: 1101-1101 DLLL-LLLL
 		DCCPacket p(address);
-		uint8_t data[] = { B11011101, low}; 
+		uint8_t data[] = { 0b11011101, low};
 		p.addData(data, 2);
-		p.setKind(function_packet_b_kind);	
+		p.setKind(function_packet_b_kind);
 		p.setRepeat(FUNCTION_REPEAT);
 		/*
 		//save:
@@ -491,13 +477,13 @@ void DCCPacketScheduler::setLocoFuncBinary(uint16_t address, uint8_t low, uint8_
 		e_stop_queue.insertPacket(&p);
 	}
 	else { 	//bis max 32767
-		//Binärzustandssteuerungsbefehl lange Form: 1100-0000 DLLL-LLLL HHHH-HHHH
+		//Binï¿½rzustandssteuerungsbefehl lange Form: 1100-0000 DLLL-LLLL HHHH-HHHH
 		DCCPacket p(address);
-		uint8_t data[] = { B11000000, low, high}; 
+		uint8_t data[] = { 0b11000000, low, high};
 		p.addData(data, 3);
-		p.setKind(function_packet_b_kind);	
+		p.setKind(function_packet_b_kind);
 		p.setRepeat(FUNCTION_REPEAT);
-		
+
 		e_stop_queue.insertPacket(&p);
 	}
 }
@@ -510,7 +496,7 @@ bool DCCPacketScheduler::setFunctions0to4(uint16_t address, uint8_t functions)
 
   DCCPacket p(address);
   uint8_t data[] = { 0x80 };
-  
+
   //Obnoxiously, the headlights (F0, AKA FL) are not controlled
   //by bit 0, but in DCC via bit 4. !
   data[0] |= functions & 0x1F;		//new - normal way of DCC! F0, F4, F3, F2, F1
@@ -519,7 +505,7 @@ bool DCCPacketScheduler::setFunctions0to4(uint16_t address, uint8_t functions)
   p.setKind(function_packet_1_kind);
   p.setRepeat(FUNCTION_REPEAT);
 
-  LokDataUpdate[LokStsgetSlot(address)].f0 = (functions & 0x1F) | (LokDataUpdate[LokStsgetSlot(address)].f0 & B11100000);	//write into register to SAVE
+  LokDataUpdate[LokStsgetSlot(address)].f0 = (functions & 0x1F) | (LokDataUpdate[LokStsgetSlot(address)].f0 & 0b11100000);	//write into register to SAVE
 
   return repeat_queue.insertPacket(&p);
 }
@@ -533,7 +519,7 @@ bool DCCPacketScheduler::setFunctions5to8(uint16_t address, uint8_t functions)
   DCCPacket p(address);
   uint8_t data[] = { 0xB0 };
   data[0] |= functions & 0x0F;
-  
+
   p.addData(data,1);
   p.setKind(function_packet_2_kind);
   p.setRepeat(FUNCTION_REPEAT);
@@ -553,7 +539,7 @@ bool DCCPacketScheduler::setFunctions9to12(uint16_t address, uint8_t functions)
   uint8_t data[] = { 0xA0 };
   //least significant four functions (F5--F8)
   data[0] |= functions & 0x0F;
-  
+
   p.addData(data,1);
   p.setKind(function_packet_3_kind);
   p.setRepeat(FUNCTION_REPEAT);
@@ -565,13 +551,13 @@ bool DCCPacketScheduler::setFunctions9to12(uint16_t address, uint8_t functions)
 
 //---------------------------------------------------------------------------------
 bool DCCPacketScheduler::setFunctions13to20(uint16_t address, uint8_t functions)	//F20 F19 F18 F17 F16 F15 F14 F13
-{	
+{
 	//Funktionssteuerung F13-F20: 1101-1110 DDDD-DDDD
 	if (address == 0)	//check if Adr is ok?
 		return false;
 
 	DCCPacket p(address);
-	uint8_t data[] = { B11011110, functions }; 	//significant functions (F20--F13)
+	uint8_t data[] = { 0b11011110, functions }; 	//significant functions (F20--F13)
 	p.addData(data, 2);
 	p.setKind(function_packet_4_kind);
 	p.setRepeat(FUNCTION_REPEAT);
@@ -588,7 +574,7 @@ bool DCCPacketScheduler::setFunctions21to28(uint16_t address, uint8_t functions)
 		return false;
 
 	DCCPacket p(address);
-	uint8_t data[] = { B11011111, functions}; 
+	uint8_t data[] = { 0b11011111, functions};
 	p.addData(data, 2);
 	p.setKind(function_packet_5_kind);
 	p.setRepeat(FUNCTION_REPEAT);
@@ -605,11 +591,11 @@ bool DCCPacketScheduler::setFunctions29to36(uint16_t address, uint8_t functions)
 		return false;
 
 	DCCPacket p(address);
-	uint8_t data[] = { B11011000, functions}; 
+	uint8_t data[] = { 0b11011000, functions};
 	p.addData(data, 2);
 	p.setKind(function_packet_5_kind);
 	p.setRepeat(FUNCTION_REPEAT);
-	
+
 	#if defined(EXTENDFUNCTION)
 	LokDataUpdate[LokStsgetSlot(address)].f0 = (functions << 5) | (LokDataUpdate[LokStsgetSlot(address)].f0 & 0x1F); //write into register to SAVE
 	#endif
@@ -625,11 +611,11 @@ bool DCCPacketScheduler::setFunctions37to44(uint16_t address, uint8_t functions)
 		return false;
 
 	DCCPacket p(address);
-	uint8_t data[] = { B11011001, functions}; 
+	uint8_t data[] = { 0b11011001, functions};
 	p.addData(data, 2);
 	p.setKind(function_packet_5_kind);
 	p.setRepeat(FUNCTION_REPEAT);
-	
+
 	#if defined(EXTENDFUNCTION)
 	//LokDataUpdate[LokStsgetSlot(address)].f5 = functions; //write into register to SAVE
 	#endif
@@ -645,11 +631,11 @@ bool DCCPacketScheduler::setFunctions45to52(uint16_t address, uint8_t functions)
 		return false;
 
 	DCCPacket p(address);
-	uint8_t data[] = { B11011010, functions}; 
+	uint8_t data[] = { 0b11011010, functions};
 	p.addData(data, 2);
 	p.setKind(function_packet_5_kind);
 	p.setRepeat(FUNCTION_REPEAT);
-	
+
 	#if defined(EXTENDFUNCTION)
 	//LokDataUpdate[LokStsgetSlot(address)].f6 = functions; //write into register to SAVE
 	#endif
@@ -665,11 +651,11 @@ bool DCCPacketScheduler::setFunctions53to60(uint16_t address, uint8_t functions)
 		return false;
 
 	DCCPacket p(address);
-	uint8_t data[] = { B11011011, functions}; 
+	uint8_t data[] = { 0b11011011, functions};
 	p.addData(data, 2);
 	p.setKind(function_packet_5_kind);
 	p.setRepeat(FUNCTION_REPEAT);
-	
+
 	#if defined(EXTENDFUNCTION)
 	//LokDataUpdate[LokStsgetSlot(address)].f7 = functions; //write into register to SAVE
 	#endif
@@ -685,11 +671,11 @@ bool DCCPacketScheduler::setFunctions61to68(uint16_t address, uint8_t functions)
 		return false;
 
 	DCCPacket p(address);
-	uint8_t data[] = { B11011100, functions}; 
+	uint8_t data[] = { 0b11011100, functions};
 	p.addData(data, 2);
 	p.setKind(function_packet_5_kind);
 	p.setRepeat(FUNCTION_REPEAT);
-	
+
 	#if defined(EXTENDFUNCTION)
 	//LokDataUpdate[LokStsgetSlot(address)].f8 = functions; //write into register to SAVE
 	#endif
@@ -698,32 +684,32 @@ bool DCCPacketScheduler::setFunctions61to68(uint16_t address, uint8_t functions)
 }
 
 //---------------------------------------------------------------------------------
-byte DCCPacketScheduler::getFunktion0to4(uint16_t address)	//gibt Funktionszustand - F0 F4 F3 F2 F1 zurück
+byte DCCPacketScheduler::getFunktion0to4(uint16_t address)	//gibt Funktionszustand - F0 F4 F3 F2 F1 zurï¿½ck
 {
 	return LokDataUpdate[LokStsgetSlot(address)].f0 & 0x1F;
 }
 //---------------------------------------------------------------------------------
-byte DCCPacketScheduler::getFunktion5to8(uint16_t address)	//gibt Funktionszustand - F8 F7 F6 F5 zurück
+byte DCCPacketScheduler::getFunktion5to8(uint16_t address)	//gibt Funktionszustand - F8 F7 F6 F5 zurï¿½ck
 {
 	return LokDataUpdate[LokStsgetSlot(address)].f1 & 0x0F;
 }
 //---------------------------------------------------------------------------------
-byte DCCPacketScheduler::getFunktion9to12(uint16_t address)	//gibt Funktionszustand - F12 F11 F10 F9 zurück
+byte DCCPacketScheduler::getFunktion9to12(uint16_t address)	//gibt Funktionszustand - F12 F11 F10 F9 zurï¿½ck
 {
 	return LokDataUpdate[LokStsgetSlot(address)].f1 >> 4;
 }
 //---------------------------------------------------------------------------------
-byte DCCPacketScheduler::getFunktion13to20(uint16_t address)	//gibt Funktionszustand F20 - F13 zurück
+byte DCCPacketScheduler::getFunktion13to20(uint16_t address)	//gibt Funktionszustand F20 - F13 zurï¿½ck
 {
 	return LokDataUpdate[LokStsgetSlot(address)].f2;
 }
 //---------------------------------------------------------------------------------
-byte DCCPacketScheduler::getFunktion21to28(uint16_t address)	//gibt Funktionszustand F28 - F21 zurück
+byte DCCPacketScheduler::getFunktion21to28(uint16_t address)	//gibt Funktionszustand F28 - F21 zurï¿½ck
 {
 	return LokDataUpdate[LokStsgetSlot(address)].f3;
 }
 //---------------------------------------------------------------------------------
-byte DCCPacketScheduler::getFunktion29to31(uint16_t address)	//gibt Funktionszustand F31 - F29 zurück
+byte DCCPacketScheduler::getFunktion29to31(uint16_t address)	//gibt Funktionszustand F31 - F29 zurï¿½ck
 {
 	return LokDataUpdate[LokStsgetSlot(address)].f0 >> 5;
 }
@@ -756,7 +742,7 @@ bool DCCPacketScheduler::setBasicAccessoryPos(uint16_t address, bool state, bool
 
       C on/off:    1 => on		// Ausgang aktivieren oder deaktivieren
       DD turnout: 01 => 2		// FAdr & 0x03  // Port
-      X str/div:   1 => set to diverging  // Weiche nach links oder nach rechts 
+      X str/div:   1 => set to diverging  // Weiche nach links oder nach rechts
 		=> X=0 soll dabei Weiche auf Abzweig bzw. Signal auf Halt kennzeichnen.
 
      => COMMAND: SET TURNOUT NUMBER 2 DIVERGING
@@ -770,9 +756,9 @@ bool DCCPacketScheduler::setBasicAccessoryPos(uint16_t address, bool state, bool
 	DCCPacket p((address + TrntFormat) >> 2); //9-bit Address + Change Format Roco / Intellibox
 	uint8_t data[1];
 	data[0] = ((address + TrntFormat) & 0x03) << 1;	//0000-CDDX -> set DD
-	if (state == true)	//SET X Weiche nach links oder nach rechts 
+	if (state == true)	//SET X Weiche nach links oder nach rechts
 		bitWrite(data[0], 0, 1);	//set turn
-	if (activ == true )	//SET C Ausgang aktivieren oder deaktivieren 
+	if (activ == true )	//SET C Ausgang aktivieren oder deaktivieren
 		bitWrite(data[0], 3, 1);	//set ON
 
 	p.addData(data, 1);
@@ -782,7 +768,7 @@ bool DCCPacketScheduler::setBasicAccessoryPos(uint16_t address, bool state, bool
 	if (notifyTrnt)
 		notifyTrnt(address, state, activ);
 
-	bitWrite(BasicAccessory[address / 8], address % 8, state);	//pro SLOT immer 8 Zustände speichern!
+	bitWrite(BasicAccessory[address / 8], address % 8, state);	//pro SLOT immer 8 Zustï¿½nde speichern!
 
 	return e_stop_queue.insertPacket(&p);
 }
@@ -839,7 +825,7 @@ bool DCCPacketScheduler::opsProgDirectCV(uint16_t CV, uint8_t CV_data)
 			notifyCVNack(CV);
 		return false;
 	}
-	
+
 	if (railpower != SERVICE) {	//time to wait for the relais!
 		setpower(SERVICE, true);
 	}
@@ -851,22 +837,22 @@ bool DCCPacketScheduler::opsProgDirectCV(uint16_t CV, uint8_t CV_data)
 	return true;
 }
 //##################################################################################
-//intern Function!	
+//intern Function!
 void DCCPacketScheduler::opsWriteCV(uint16_t CV, uint8_t CV_data)
 {
 	//for CV#1 is the Adress 0
-	//Long-preamble   0  0111CCAA  0  AAAAAAAA  0  DDDDDDDD  0  EEEEEEEE  1 
+	//Long-preamble   0  0111CCAA  0  AAAAAAAA  0  DDDDDDDD  0  EEEEEEEE  1
 	//CC=10 Bit Manipulation
 	//CC=01 Verify byte
 	//CC=11 Write byte 	<--
-	DCCPacket p(((CV >> 8) & B11) | B01111100);
+	DCCPacket p(((CV >> 8) & 0b11) | 0b01111100);
 	uint8_t data[] = { 0x00 , 0x00};
 	data[0] = CV & 0xFF;
 	data[1] = CV_data;
 	p.addData(data, 2);
 	p.setKind(ops_mode_programming_kind);	//always use short Adress Mode!
 	p.setRepeat(1); //auto repeat inside ISR! (ProgRepeat)
-	
+
 	ops_programmming_queue.insertPacket(&p);	//send on the rails
 }
 
@@ -880,11 +866,11 @@ bool DCCPacketScheduler::opsVerifyDirectCV(uint16_t CV, uint8_t CV_data)
 			notifyCVNack(CV);
 		return false;
 	}
-	
+
 	if (railpower != SERVICE) {	//time to wait for the relais!
 		setpower(SERVICE, true);
 	}
-	
+
 	ProgState = ProgStart;
 	ProgMode = ProgModeByteVerify;
 	current_cv = CV;
@@ -892,15 +878,15 @@ bool DCCPacketScheduler::opsVerifyDirectCV(uint16_t CV, uint8_t CV_data)
 	return true;
 }
 //##################################################################################
-//intern Function!	
-void DCCPacketScheduler::opsVerifyCV(uint16_t CV, uint8_t CV_data) 
+//intern Function!
+void DCCPacketScheduler::opsVerifyCV(uint16_t CV, uint8_t CV_data)
 {
 	//for CV#1 is the Adress 0
-	//Long-preamble   0  0111CCAA  0  AAAAAAAA  0  DDDDDDDD  0  EEEEEEEE  1 
+	//Long-preamble   0  0111CCAA  0  AAAAAAAA  0  DDDDDDDD  0  EEEEEEEE  1
 	//CC=10 Bit Manipulation
 	//CC=01 Verify byte		<--
-	//CC=11 Write byte 
-	DCCPacket p(((CV >> 8) & B11) | B01110100);
+	//CC=11 Write byte
+	DCCPacket p(((CV >> 8) & 0b11) | 0b01110100);
 	uint8_t data[2];
 	data[0]	= CV & 0xFF;
 	data[1] = CV_data;
@@ -922,7 +908,7 @@ bool DCCPacketScheduler::opsReadDirectCV(uint16_t CV)
 			notifyCVNack(CV);
 		return false;
 	}
-	
+
 	if (railpower != SERVICE) {	//time to wait for the relais!
 		setpower(SERVICE, true);
 	}
@@ -934,25 +920,25 @@ bool DCCPacketScheduler::opsReadDirectCV(uint16_t CV)
 	return true;
 }
 //##################################################################################
-//intern Function!	
+//intern Function!
 void DCCPacketScheduler::opsReadCV(uint16_t CV, uint8_t bitToRead, bool bitState)
-{	
+{
 	//for CV#1 is the Adress 0
-	//long-preamble   0  0111CCAA  0  AAAAAAAA  0  111KDBBB  0  EEEEEEEE  1 
+	//long-preamble   0  0111CCAA  0  AAAAAAAA  0  111KDBBB  0  EEEEEEEE  1
 	//CC=10 Bit Manipulation	<--
-	//CC=01 Verify byte		
-	//CC=11 Write byte 
-	//BBB represents the bit position 
+	//CC=01 Verify byte
+	//CC=11 Write byte
+	//BBB represents the bit position
 	//D contains the value of the bit to be verified or written
-	//K=1 signifies a "Write Bit" operation and K=0 signifies a "Bit Verify" 
-	DCCPacket p(((CV >> 8) & B11) | B01111000);
+	//K=1 signifies a "Write Bit" operation and K=0 signifies a "Bit Verify"
+	DCCPacket p(((CV >> 8) & 0b11) | 0b01111000);
 	uint8_t data[] = { 0x00 , 0x00};
 	data[0] = CV & 0xFF;
-	data[1] = B11100000 | (bitToRead & 0x07) | (bitState << 3);	//verify Bit is "bitSet"? ("1" or "0")
+	data[1] = 0b11100000 | (bitToRead & 0x07) | (bitState << 3);	//verify Bit is "bitSet"? ("1" or "0")
 	p.addData(data, 2);
 	p.setKind(ops_mode_programming_kind);	//always use short Adress Mode!
 	p.setRepeat(1);	//auto repeat inside ISR! (ProgRepeat)
-	
+
 	ops_programmming_queue.insertPacket(&p);	//send on the rails
 }
 //---------------------------------------------------------------------------------
@@ -971,9 +957,16 @@ bool DCCPacketScheduler::opsProgramCV(uint16_t address, uint16_t CV, uint8_t CV_
 		return false;
 
 	DCCPacket p(address);
-	
+
 	// split the CV address up among data uint8_ts 0 and 1
-	uint8_t data[] = { ((CV >> 8) & B11) | B11101100, CV & 0xFF, CV_data };
+
+  // Changed, to avoid compiler warnings
+	//uint8_t data[] = { ((CV >> 8) & 0b11) | 0b11101100, CV & 0xFF, CV_data };
+  uint8_t data[] = {
+    static_cast<uint8_t>(((CV >> 8) & 0b11) | 0b11101100),
+    static_cast<uint8_t>(CV & 0xFF),
+    static_cast<uint8_t>(CV_data)
+  };
 
 	p.addData(data, 3);
 	p.setKind(pom_mode_programming_kind);
@@ -999,7 +992,14 @@ bool DCCPacketScheduler::opsPOMwriteBit(uint16_t address, uint16_t CV, uint8_t B
 
 	DCCPacket p(address);
 	// split the CV address up among data uint8_ts 0 and 1
-	uint8_t data[] = { ((CV >> 8) & B11) | B11101000, CV & 0xFF, Bit_data & 0x0F};
+  // Modified, to avoid compiler warnings
+	//uint8_t data[] = { ((CV >> 8) & 0b11) | 0b11101000, CV & 0xFF, Bit_data & 0x0F};
+  uint8_t data[] = {
+    static_cast<uint8_t>(((CV >> 8) & 0b11) | 0b11101000),
+    static_cast<uint8_t>(CV & 0xFF),
+    static_cast<uint8_t>(Bit_data & 0x0F)
+  };
+
 
 	p.addData(data, 3);
 	p.setKind(pom_mode_programming_kind);
@@ -1023,12 +1023,18 @@ bool DCCPacketScheduler::opsPOMreadCV(uint16_t address, uint16_t CV)
 
 	DCCPacket p(address);
 	// split the CV address up among data uint8_ts 0 and 1
-	uint8_t data[] = { ((CV >> 8) & B11) | B11100100, CV & 0xFF, 0x00 };
+  // Modified, to avoid compiler warnings
+	// uint8_t data[] = { ((CV >> 8) & 0b11) | 0b11100100, CV & 0xFF, 0x00 };
+  uint8_t data[] = {
+    static_cast<uint8_t>(((CV >> 8) & 0b11) | 0b11100100),
+    static_cast<uint8_t>(CV & 0xFF),
+    static_cast<uint8_t>(0x00)
+  };
 
 	p.addData(data, 3);
 	p.setKind(pom_mode_programming_kind);
 	p.setRepeat(ProgRepeat);
-	
+
 	#if defined(GLOBALRAILCOMREADER)
 	POMCVAdr = CV;
 	#endif
@@ -1051,14 +1057,14 @@ bool DCCPacketScheduler::opsDecoderReset(uint8_t repeat)	//default RSTcRepeat
 	return ops_programmming_queue.insertPacket(&p);
 }
 
-//---------------------------------------------------------------------------------    
+//---------------------------------------------------------------------------------
 //broadcast e-stop command
 void DCCPacketScheduler::eStop(void)
 {
     // 111111111111 0 00000000 0 01DC0001 0 EEEEEEEE 1
 	// C = by default contain one additional speed bit
 	// D = direction ("1" the locomotive should	move in	the	forward	direction)
-	
+
     DCCPacket e_stop_packet(0); //address 0
     uint8_t data[] = {0x61}; //01100001
     e_stop_packet.addData(data,1);
@@ -1089,7 +1095,7 @@ bool DCCPacketScheduler::eStop(uint16_t address)
     //high_priority_queue.forget(address);	//no locos
 	//low_priority_queue.forget(address);
 	//repeat_queue.forget(address);
-	//periodic_refresh_queue.forget(address);			
+	//periodic_refresh_queue.forget(address);
 	e_stop_packet.setKind(speed_packet_kind);
 	repeat_queue.insertPacket(&e_stop_packet);
 }
@@ -1100,18 +1106,17 @@ bool DCCPacketScheduler::eStop(uint16_t address)
 //checks queues, puts whatever's pending on the rails via global current_packet
 void DCCPacketScheduler::update(void) {
 	//CV read packet is on Prog.Track:
-	if ((current_packet_service > 0) && (current_packet_service < 0xFF)) {
+	if ((dccPacketEngine.serviceMode > 0) && (dccPacketEngine.serviceMode < 0xFF)) {
 		if (notifyCurrentSence) {	//get the Base rail current
 			uint16_t current_load_now = notifyCurrentSence();
-			
-			if (current_packet_service == (0xFF - ProgRepeat)) {	//first packet - base current!
+			if (dccPacketEngine.serviceMode == (0xFF - ProgRepeat)) {	//first packet - base current!
 				//get base current voltage:
 				if (current_ack_status != WAIT_FOR_ACK) {
 					LASTVAmpSence = current_load_now;  //store the last value
 					current_ack_status = WAIT_FOR_ACK;
 					#if defined(PROG_DEBUG)
 					Serial.print(current_load_now);
-					Serial.print(":");	
+					Serial.print(":");
 					#endif
 				}
 			}
@@ -1122,21 +1127,21 @@ void DCCPacketScheduler::update(void) {
 						current_ack_status = ACK_DETECTED;
 						ack_start_time = micros();
 							#if defined(PROG_DEBUG)
-							Serial.print(current_load_now);	
+							Serial.print(current_load_now);
 							Serial.print(";");
 							#endif
-						
+
 					}
 				}
 				else {
 					if (current_ack_status == ACK_DETECTED) {
-						if ( ((micros() - ack_start_time) / 1000) >= ACK_SENCE_MIN) { 
+						if ( ((micros() - ack_start_time) / 1000) >= ACK_SENCE_MIN) {
 							if ( ((micros() - ack_start_time) / 1000) <= ACK_SENCE_MAX) {	//sec.
 								current_ack_status = ACK_READ_SUCCESS;
 							}
 							else current_ack_status = ACK_READ_FAIL;
 						}
-						else current_ack_status = WAIT_FOR_ACK;	
+						else current_ack_status = WAIT_FOR_ACK;
 					#if defined(PROG_DEBUG)
 						Serial.print((micros() - ack_start_time) / 1000);
 					#endif
@@ -1147,7 +1152,7 @@ void DCCPacketScheduler::update(void) {
 	} //ENDE Service-Mode operation
 
 	//Get next packet:
-	if (get_next_packet) //if the ISR needs a packet:
+  if (dccPacketEngine.isWaiting)      //if the ISR needs a packet:
 	{
 		DCCPacket p;
 
@@ -1180,41 +1185,41 @@ void DCCPacketScheduler::update(void) {
 							cv_read_count = 0;		//counter for try to read data (repeat)
 							LASTVAmpSence = 0;		//reset
 							COUNTVAmpSence = 0;		//reset normal mA level
-							current_packet_service = 0xFF;
+							dccPacketEngine.serviceMode = 0xFF;
 							//Send Start Reset Packets:
 							opsDecoderReset(RSTsRepeat);	//send first a Reset Start Packet
 							ops_programmming_queue.readPacket(&p);
 							ack_start_time = micros();
 						break; }
-						case ProgACKRead: {	
+						case ProgACKRead: {
 							#if defined(PROG_DEBUG)
 								if (current_ack_status == ACK_READ_SUCCESS)	//ACK from decoder
 									Serial.print("A");
 								else Serial.print("x");
 								if (COUNTVAmpSence < 10)
 									Serial.print("0");
-								Serial.print(COUNTVAmpSence);						
-								Serial.print(" ");	
+								Serial.print(COUNTVAmpSence);
+								Serial.print(" ");
 							#endif
-							
+
 							COUNTVAmpSence = 0;	//reset
 							LASTVAmpSence = 0;		//reset last read mA level
-							
+
 							switch (ProgMode) {
-								case ProgModeBit: 
+								case ProgModeBit:
 									//Check Bit Status
 									if (current_ack_status == ACK_READ_SUCCESS)  //CV read....?
 										bitWrite(current_cv_value,current_cv_bit,1);	//ACK, so bit is 'one'!
-									else bitWrite(current_cv_value,current_cv_bit,0);	//no ACK => 'zero'!	
+									else bitWrite(current_cv_value,current_cv_bit,0);	//no ACK => 'zero'!
 									current_cv_bit++;	//get next bit
 									if (current_cv_bit <= 7)
 										ProgState = ProgBitRead;
 									else {
 										#if defined(PROG_DEBUG)
 											Serial.print(current_cv_value);
-											Serial.print(" b");	
+											Serial.print(" b");
 											Serial.print(current_cv_value, BIN);
-											Serial.print("; ");	
+											Serial.print("; ");
 										#endif
 										ProgState = ProgVerifyCV;
 										ProgMode = ProgModeBitVerify;
@@ -1222,13 +1227,13 @@ void DCCPacketScheduler::update(void) {
 									break;
 								case ProgModeBitVerify: {
 									#if defined(PROG_DEBUG)
-									if (current_ack_status == ACK_READ_SUCCESS)	
+									if (current_ack_status == ACK_READ_SUCCESS)
 										Serial.println();
 									#endif
-									current_cv_bit = 0;		//reset 
+									current_cv_bit = 0;		//reset
 									ProgMode = ProgModeBit;
 									//Check CV Value
-									if (current_ack_status == ACK_READ_SUCCESS) 
+									if (current_ack_status == ACK_READ_SUCCESS)
 										ProgState = ProgSuccess;
 									else {
 										//Read again...
@@ -1241,43 +1246,43 @@ void DCCPacketScheduler::update(void) {
 													Serial.println("Try Byte-Mode");
 													#endif
 													//------change Mode!!!----------
-													ProgState = ProgStart;	
+													ProgState = ProgStart;
 													ProgMode = ProgModeByte;
 												}
 												else ProgState = ProgFail;	//byte verify fails!
 											}
 											#if defined(PROG_DEBUG)
-											else {												
+											else {
 												Serial.print("wrong ");
 												Serial.print(cv_read_count);
 												Serial.println(" again!!!");
 											}
 											#endif
-										}	
+										}
 										else ProgState = ProgFail;	//no ACK while reading - "keine Lok gefunden!"
 										current_cv_value = 0;	//reset
 									}
 									break; }
 								case ProgModeByteVerify:
-									if (current_ack_status == ACK_READ_SUCCESS) 
+									if (current_ack_status == ACK_READ_SUCCESS)
 										ProgState = ProgSuccess;
 									else ProgState = ProgFail;
 									break;
 								case ProgModeByte:
 									//Check Byte Status
-									if (current_ack_status == ACK_READ_SUCCESS) 
+									if (current_ack_status == ACK_READ_SUCCESS)
 										ProgState = ProgSuccess;
 									else {
 										#if defined(PROG_DEBUG)
 											Serial.print(current_cv_value);
-											Serial.print(" b");	
+											Serial.print(" b");
 											Serial.println(current_cv_value, BIN);
 										#endif
 										current_cv_value++;	//check the next value
 										ProgState = ProgVerifyCV;
 										if (current_cv_value == 0) {	//we are at the end?
 											cv_read_count++;		//count times we try to read this cv!
-											ProgState = ProgStart;	
+											ProgState = ProgStart;
 											if (cv_read_count == CV_BYTE_MAX_TRY_READ) //check if we should stop to try?
 												ProgState = ProgFail;
 										}
@@ -1305,7 +1310,7 @@ void DCCPacketScheduler::update(void) {
 						case ProgWriteByte: {
 							//switch to Verify Mode:
 							ProgState = ProgVerifyCV;
-							ProgMode = ProgModeByteVerify; 
+							ProgMode = ProgModeByteVerify;
 							//Write Byte into CV:
 							opsWriteCV(current_cv,current_cv_value);
 							ops_programmming_queue.readPacket(&p);
@@ -1313,7 +1318,7 @@ void DCCPacketScheduler::update(void) {
 						case ProgEnde: {
 							//switch to "normal" Mode!
 							setpower(ON, true);		//force to leave Service Mode!
-							current_packet_service = 0;
+							dccPacketEngine.serviceMode = 0;
 							return;	//no new packet here!
 						break; }
 					}
@@ -1322,18 +1327,18 @@ void DCCPacketScheduler::update(void) {
 						//CV lesen erfolgreich
 						if (notifyCVVerify)		//Verify the Value to device!
 							notifyCVVerify(current_cv,current_cv_value);
-						ProgState = ProgEnde;	
+						ProgState = ProgEnde;
 					}
 					if (ProgState == ProgFail) {	//lesen fehlgeschlagen!
 						//Error:
 						if (notifyCVNack)
 							notifyCVNack(current_cv);
-						ProgState = ProgEnde;	
+						ProgState = ProgEnde;
 					}
 			}	//ENDE Service-Mode
 			//--------------------------- Normal Packet Mode ------------------------------------------------------------------------------------
 				else {
-					current_packet_service = 0;
+					dccPacketEngine.serviceMode = 0;
 					if (e_stop_queue.notEmpty() && (packet_counter % ONCE_REFRESH_INTERVAL)) {	//if there's an e_stop packet, send it now!
 						e_stop_queue.readPacket(&p); //nothing more to do. e_stop_queue is a repeat_queue, so automatically repeats where necessary.
 					}
@@ -1349,7 +1354,7 @@ void DCCPacketScheduler::update(void) {
 							else {
 								//try again:
 								if (e_stop_queue.notEmpty())
-									e_stop_queue.readPacket(&p); 
+									e_stop_queue.readPacket(&p);
 								else return; //no data to send!
 							}
 						}
@@ -1361,14 +1366,15 @@ void DCCPacketScheduler::update(void) {
 		}
 		++packet_counter;	//to not repeat only one queue!
 		//last_packet_address = p.getAddress(); //remember the address to compare with the next packet
-		current_packet_size = p.getBitstream(current_packet); //feed to the starting ISR.
-		
-		get_next_packet = false;
+		//current_packet_size = p.getBitstream(current_packet); //feed to the starting ISR.
+    dccPacketEngine.dataSize = p.getBitstream(dccPacketEngine.data); //feed to the starting ISR.
+
+    dccPacketEngine.isWaiting = false;
 	}
 }
 
 bool DCCPacketScheduler::getRailComStatus (void) {
-	return RailComActiv;
+	return dccPacketEngine.railComGap();
 }
 
 
@@ -1387,13 +1393,13 @@ void DCCPacketScheduler::getLocoData(uint16_t adr, uint8_t data[])
 }
 
 //--------------------------------------------------------------------------------------------
-//Gibt aktuelle Fahrtrichtung der Angefragen Lok zurück
+//Gibt aktuelle Fahrtrichtung der Angefragen Lok zurï¿½ck
 byte DCCPacketScheduler::getLocoDir(uint16_t adr)
 {
 	return bitRead(LokDataUpdate[LokStsgetSlot(adr)].speed, 7);
 }
 //--------------------------------------------------------------------------------------------
-//Gibt aktuelle Geschwindigkeit der Angefragen Lok zurück
+//Gibt aktuelle Geschwindigkeit der Angefragen Lok zurï¿½ck
 byte DCCPacketScheduler::getLocoSpeed(uint16_t adr)
 {
 	return LokDataUpdate[LokStsgetSlot(adr)].speed & 0x7F;
@@ -1401,7 +1407,7 @@ byte DCCPacketScheduler::getLocoSpeed(uint16_t adr)
 
 //--------------------------------------------------------------------------------------------
 //--------------------------------------------------------------------------------------------
-byte DCCPacketScheduler::LokStsgetSlot(uint16_t adr)		//gibt Slot für Adresse zurück / erzeugt neuen Slot (0..126)
+byte DCCPacketScheduler::LokStsgetSlot(uint16_t adr)		//gibt Slot fï¿½r Adresse zurï¿½ck / erzeugt neuen Slot (0..126)
 {
 	byte Slot;
 	for (Slot = 0; Slot < SlotMax; Slot++) {
@@ -1414,7 +1420,7 @@ byte DCCPacketScheduler::LokStsgetSlot(uint16_t adr)		//gibt Slot für Adresse zu
 		}
 	}
 	//kein Slot mehr vorhanden!
-	//start am Anfang mit dem Überschreiben vorhandender Slots
+	//start am Anfang mit dem ï¿½berschreiben vorhandender Slots
 	Slot = slotFullNext;
 	LokStsSetNew(Slot, adr);	//clear Slot!
 	slotFullNext++;
@@ -1435,7 +1441,7 @@ void DCCPacketScheduler::LokStsSetNew(byte Slot, uint16_t adr)	//Neue Lok eintra
 
 	//generate first drive information:
 	#if defined(InitLocoDirect)
-	setSpeed(LokDataUpdate[Slot].adr, LokDataUpdate[Slot].speed); 
+	setSpeed(LokDataUpdate[Slot].adr, LokDataUpdate[Slot].speed);
 	#endif
 }
 
@@ -1449,7 +1455,7 @@ ISR(USART3_RX_vect) {
 
 //--------------------------------------------------------------------------------------------
 // Interrupt handling for receive Data
-// static 
+// static
 inline void DCCPacketScheduler::handle_RX_interrupt()
 {
   if (active_object)
@@ -1469,7 +1475,7 @@ void DCCPacketScheduler::RailComReceive(void) {
 	else if (RailComData == 0xFF)
 		RailComData = c;
 	/*
-	if (c < 0x40) {    //gültige Railcom Message empfangen
+	if (c < 0x40) {    //gï¿½ltige Railcom Message empfangen
 		//Serial.print(c, BIN);
 		//Serial.print(":");
 	}
@@ -1479,70 +1485,70 @@ void DCCPacketScheduler::RailComReceive(void) {
 //Decoding RailCom Received Data
 uint8_t DCCPacketScheduler::RailComDecodeInData(uint8_t in) {
   switch (in) {
-    case B10101100: return 0x00;
-    case B10110010: return 0x10; 
-    case B01010110: return 0x20;
-    case B11000110: return 0x30;
-    case B10101010: return 0x01;
-    case B10110100: return 0x11;
-    case B01001110: return 0x21;
-    case B11001100: return 0x31;
-    case B10101001: return 0x02;
-    case B10111000: return 0x12;
-    case B01001101: return 0x22;
-    case B01111000: return 0x32;
-    case B10100101: return 0x03;
-    case B01110100: return 0x13;
-    case B01001011: return 0x23;
-    case B00010111: return 0x33;
-    case B10100011: return 0x04;
-    case B01110010: return 0x14;
-    case B01000111: return 0x24;
-    case B00011011: return 0x34;
-    case B10100110: return 0x05;
-    case B01101100: return 0x15;
-    case B01110001: return 0x25;
-    case B00011101: return 0x35;
-    case B10011100: return 0x06;
-    case B01101010: return 0x16;
-    case B11101000: return 0x26;
-    case B00011110: return 0x36;
-    case B10011010: return 0x07;
-    case B01101001: return 0x17;
-    case B11100100: return 0x27;
-    case B00101110: return 0x37;
-    case B10011001: return 0x08;
-    case B01100101: return 0x18;
-    case B11100010: return 0x28;
-    case B00110110: return 0x38;
-    case B10010101: return 0x09;
-    case B01100011: return 0x19;
-    case B11010001: return 0x29;
-    case B00111010: return 0x39;
-    case B10010011: return 0x0A;
-    case B01100110: return 0x1A;
-    case B11001001: return 0x2A;
-    case B00100111: return 0x3A;
-    case B10010110: return 0x0B;
-    case B01011100: return 0x1B;
-    case B11000101: return 0x2B;
-    case B00101011: return 0x3B;
-    case B10001110: return 0x0C;
-    case B01011010: return 0x1C;
-    case B11011000: return 0x2C;
-    case B00101101: return 0x3C;
-    case B10001101: return 0x0D;
-    case B01011001: return 0x1D;
-    case B11010100: return 0x2D;
-    case B00110101: return 0x3D;
-    case B10001011: return 0x0E;
-    case B01010101: return 0x1E;
-    case B11010010: return 0x2E;
-    case B00111001: return 0x3E;
-    case B10110001: return 0x0F;
-    case B01010011: return 0x1F;
-    case B11001010: return 0x2F;
-    case B00110011: return 0x3F;
+    case 0b10101100: return 0x00;
+    case 0b10110010: return 0x10;
+    case 0b01010110: return 0x20;
+    case 0b11000110: return 0x30;
+    case 0b10101010: return 0x01;
+    case 0b10110100: return 0x11;
+    case 0b01001110: return 0x21;
+    case 0b11001100: return 0x31;
+    case 0b10101001: return 0x02;
+    case 0b10111000: return 0x12;
+    case 0b01001101: return 0x22;
+    case 0b01111000: return 0x32;
+    case 0b10100101: return 0x03;
+    case 0b01110100: return 0x13;
+    case 0b01001011: return 0x23;
+    case 0b00010111: return 0x33;
+    case 0b10100011: return 0x04;
+    case 0b01110010: return 0x14;
+    case 0b01000111: return 0x24;
+    case 0b00011011: return 0x34;
+    case 0b10100110: return 0x05;
+    case 0b01101100: return 0x15;
+    case 0b01110001: return 0x25;
+    case 0b00011101: return 0x35;
+    case 0b10011100: return 0x06;
+    case 0b01101010: return 0x16;
+    case 0b11101000: return 0x26;
+    case 0b00011110: return 0x36;
+    case 0b10011010: return 0x07;
+    case 0b01101001: return 0x17;
+    case 0b11100100: return 0x27;
+    case 0b00101110: return 0x37;
+    case 0b10011001: return 0x08;
+    case 0b01100101: return 0x18;
+    case 0b11100010: return 0x28;
+    case 0b00110110: return 0x38;
+    case 0b10010101: return 0x09;
+    case 0b01100011: return 0x19;
+    case 0b11010001: return 0x29;
+    case 0b00111010: return 0x39;
+    case 0b10010011: return 0x0A;
+    case 0b01100110: return 0x1A;
+    case 0b11001001: return 0x2A;
+    case 0b00100111: return 0x3A;
+    case 0b10010110: return 0x0B;
+    case 0b01011100: return 0x1B;
+    case 0b11000101: return 0x2B;
+    case 0b00101011: return 0x3B;
+    case 0b10001110: return 0x0C;
+    case 0b01011010: return 0x1C;
+    case 0b11011000: return 0x2C;
+    case 0b00101101: return 0x3C;
+    case 0b10001101: return 0x0D;
+    case 0b01011001: return 0x1D;
+    case 0b11010100: return 0x2D;
+    case 0b00110101: return 0x3D;
+    case 0b10001011: return 0x0E;
+    case 0b01010101: return 0x1E;
+    case 0b11010010: return 0x2E;
+    case 0b00111001: return 0x3E;
+    case 0b10110001: return 0x0F;
+    case 0b01010011: return 0x1F;
+    case 0b11001010: return 0x2F;
+    case 0b00110011: return 0x3F;
     case 0x0F: return 0xF0;   //ACK
   }
   return 0xFF;

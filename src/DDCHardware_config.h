@@ -3,7 +3,7 @@
 *
 * DCC Waveform Timer Configuration
 *
-* DCC Master Interface can generate DCC Signal 
+* DCC Master Interface can generate DCC Signal
 * either with Timer1 (16-bit) or with Timer2 (8-bit) by default!
 * for ARM on Arduino DUE with TC3 = Timer4 (TC1 Channel 0)
 * for ESP8266 with Timer1
@@ -21,28 +21,30 @@ Dauer des Teil-Einsbits: t = 58 µs & zulässige Toleranzen +/- 3 µs am Gleis
 Dauer des Teil-Nullbits: t ≥ 100 µs, normal: 116µs
 */
 /******************************************/
-#if defined(__AVR__)  
+#if defined(__AVR__)
 //CONTROL What Timer we should use:
-//#define DCC_USE_TIMER1	//USE 16-bit TIMER1
-#undef DCC_USE_TIMER1		//USE 8-bit TIMER2
+// Timer1: 16 bits, CTC mode (Clear Timer on Compare Match) => Eninge die momenteel werkt
+// Timer2: 8 bits, Overflow mode
+#define DCC_USES_TIMER1
 #endif
+
 
 /******************************************/
 //DCC truth table:
-
+/*
 //OFF:
 #if defined(__AVR__)
 #define DCC_OUTPUT1_OFF() 			{*d1reg &= ~d1bit;}		//LOW
 #endif
 #define DCC_OUTPUT1_OFF_legacy	 	LOW
 #if defined(__AVR__)
-#define DCC_OUTPUT2_OFF() 			{*d2reg &= ~d2bit;}		//LOW 
+#define DCC_OUTPUT2_OFF() 			{*d2reg &= ~d2bit;}		//LOW
 #endif
 #define DCC_OUTPUT2_OFF_legacy	 	LOW
 
 //RailCom:
 #if defined(__AVR__)
-#define DCC_OUTPUT1_RC() 			{*d1reg &= ~d1bit;}		 //LOW 
+#define DCC_OUTPUT1_RC() 			{*d1reg &= ~d1bit;}		 //LOW
 #endif
 #define DCC_OUTPUT1_RC_legacy	 	LOW
 #if defined(__AVR__)
@@ -69,84 +71,83 @@ Dauer des Teil-Nullbits: t ≥ 100 µs, normal: 116µs
 #define DCC_OUTPUT2_HIGH() 			{*d2reg &= ~d2bit;}	 //LOW
 #endif
 #define DCC_OUTPUT2_HIGH_legacy	 	LOW
-
+*/
 /******************************************/
 //Arduino DUE DCC Signal generation on TC3 = Timer4 (TC1 Channel 0)
 #if defined(__SAM3X8E__)
 #define half_one_count 305  //29usec pulse
 #define one_count	609		// Calls every 58µs
-#define zero_high_count	1050	// Calls every 100µs
-//#define zero_low_count	1050	// Calls every 100µs
+#define zero_count	1050	// Calls every 100µs
 #define DCC_ARM_TC_TIMER	TC2			//Timer
 #define DCC_ARM_TC_CHANNEL	0			//Channel
 #define DCC_ARM_MATCH_INT	TC6_IRQn	//Interrupt that will be used
 #define DCC_ARM_TC_SIGNAL	TC6_Handler()	//Interrupt Handler
-#define DCC_TMR_OUTP_ONE_HALF()  {TC_SetRC(DCC_ARM_TC_TIMER, DCC_ARM_TC_CHANNEL, half_one_count); }	
-#define DCC_TMR_OUTP_ONE_COUNT() {TC_SetRC(DCC_ARM_TC_TIMER, DCC_ARM_TC_CHANNEL, one_count); }	
-#define DCC_TMR_OUTP_ZERO_HIGH() {TC_SetRC(DCC_ARM_TC_TIMER, DCC_ARM_TC_CHANNEL, zero_high_count);}    
-//#define DCC_TMR_OUTP_ZERO_LOW()  {TC_SetRC(DCC_ARM_TC_TIMER, DCC_ARM_TC_CHANNEL, zero_low_count);}    
+#define TMR_SET_RAILCOM_STARTBIT()  {TC_SetRC(DCC_ARM_TC_TIMER, DCC_ARM_TC_CHANNEL, half_one_count); }
+#define TMR_SET_ONE() {TC_SetRC(DCC_ARM_TC_TIMER, DCC_ARM_TC_CHANNEL, one_count); }
+#define TMR_SET_ZERO() {TC_SetRC(DCC_ARM_TC_TIMER, DCC_ARM_TC_CHANNEL, zero_count);}
+//#define TMR_SET_ZERO()  {TC_SetRC(DCC_ARM_TC_TIMER, DCC_ARM_TC_CHANNEL, zero_count);}
 
 /******************************************/
 //ESP8266 DCC Signal generation with Timer1
-#elif defined(ESP8266) 
+#elif defined(ESP8266)
 //TIM_DIV1 = 0   -> 80MHz (80 ticks/us - 104857.588us max)
 //TIM_DIV16 = 1  -> 5MHz (5 ticks/us - 1677721.4us max)
 //TIM_DIV256 = 3 -> 312.5Khz (1 tick = 3.2us - 26843542.4us max)
 #define half_one_count 2080  // 145  //29usec pulse		old:2280 new:2080
 #define one_count 4160		 // 290 - Calls every 58µs  old:4580 new:4160
-#define zero_high_count	7920 // 500 - Calls every 100µs
-#define zero_low_count	7920 // 500	// Calls every 100µs
+#define zero_count	7920 // 500 - Calls every 100µs
+
+uint16_t last_timer = one_count;	//last time set to timer
+
 #define DCC_ESP_TIMER_DIV 		 TIM_DIV1
 #define DCC_ESP_TIMER_SET		 TIM_EDGE
 #define DCC_ESP_TIMER_LOOP  	 TIM_SINGLE
-#define DCC_TMR_OUTP_ONE_HALF()  {timer1_write(half_one_count); last_timer = half_one_count;}	
-#define DCC_TMR_OUTP_ONE_COUNT() {timer1_write(one_count); last_timer = one_count;}	
-#define DCC_TMR_OUTP_ZERO_HIGH() {timer1_write(zero_high_count); last_timer = zero_high_count;}    
-#define DCC_TMR_OUTP_ZERO_LOW()  {timer1_write(zero_low_count); last_timer = zero_low_count;}    
+#define TMR_SET_RAILCOM_STARTBIT()  {timer1_write(half_one_count); last_timer = half_one_count;}
+#define TMR_SET_ONE() {timer1_write(one_count); last_timer = one_count;}
+#define TMR_SET_ZERO() {timer1_write(zero_count); last_timer = zero_count;}
+#define TMR_SET_ZERO()  {timer1_write(zero_count); last_timer = zero_count;}
 
 /******************************************/
 //ESP32 DCC Signal generation with Timer1
 #elif defined(ESP32)
 #define half_one_count 580  //29usec pulse
 #define one_count 960		// Calls every 58µs
-#define zero_high_count	2001	// Calls every 100µs
-#define zero_low_count	2001	// Calls every 100µs
+#define zero_count	2001	// Calls every 100µs
+
+uint16_t last_timer = one_count;	//last time set to timer
+
 #define DCC_ESP_TIMER_ID		 1		//the Timer number from 0 to 3
 #define DCC_ESP_TIMER_PRESCALE	 4		//prescale the value of the time divider
 #define DCC_ESP_TIMER_FLAG		 true	//flag true to count on the rising edge, false to count on the falling edge
 
-#if ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
+#if (ESP_ARDUINO_VERSION >= (ESP_ARDUINO_VERSION_VAL(3, 0, 0)))
 /* ESP Arduino core 3.x
  * from ESP 3.x docu:
  * void timerAlarm(hw_timer_t * timer, uint64_t alarm_value, bool autoreload, uint64_t reload_count);
  */
-#define DCC_TMR_OUTP_ONE_HALF()  {timerAlarm(timer, half_one_count, true, 0); last_timer = half_one_count;}
-#define DCC_TMR_OUTP_ONE_COUNT() {timerAlarm(timer, one_count, true, 0); last_timer = one_count;}
-#define DCC_TMR_OUTP_ZERO_HIGH() {timerAlarm(timer, zero_high_count, true, 0); last_timer = zero_high_count;}
-#define DCC_TMR_OUTP_ZERO_LOW()  {timerAlarm(timer, zero_low_count, true, 0); last_timer = zero_low_count;}
+#define TMR_SET_RAILCOM_STARTBIT()  {timerAlarm(timer, half_one_count, true, 0); last_timer = half_one_count;}
+#define TMR_SET_ONE() {timerAlarm(timer, one_count, true, 0); last_timer = one_count;}
+#define TMR_SET_ZERO() {timerAlarm(timer, zero_count, true, 0); last_timer = zero_count;}
 #else
 /* ESP Arduino core 2.x
  * from ESP 2.x docu:
  * void timerAlarmWrite(hw_timer_t *timer, uint64_t alarm_value, bool autoreload);
  * void timerAlarmEnable(hw_timer_t *timer);
  */
-#define DCC_TMR_OUTP_ONE_HALF()  {timerAlarmWrite(timer, half_one_count, true); last_timer = half_one_count;}
-#define DCC_TMR_OUTP_ONE_COUNT() {timerAlarmWrite(timer, one_count, true); last_timer = one_count;}
-#define DCC_TMR_OUTP_ZERO_HIGH() {timerAlarmWrite(timer, zero_high_count, true); last_timer = zero_high_count;}
-#define DCC_TMR_OUTP_ZERO_LOW()  {timerAlarmWrite(timer, zero_low_count, true); last_timer = zero_low_count;}
+#define TMR_SET_RAILCOM_STARTBIT()  {timerAlarmWrite(timer, half_one_count, true); last_timer = half_one_count;}
+#define TMR_SET_ONE() {timerAlarmWrite(timer, one_count, true); last_timer = one_count;}
+#define TMR_SET_ZERO() {timerAlarmWrite(timer, zero_count, true); last_timer = zero_count;}
 #endif
 
 
 
 /******************************************/
 //USE the Timer1 for the DCC Signal generation on AVR
-#elif defined(DCC_USE_TIMER1)
-#undef DCC_USE_TIMER2
+#elif defined(DCC_USES_TIMER1)
 
 #define half_one_count 57  //29usec pulse
 #define one_count 115 //58us = 115
-#define zero_high_count 199 //100us = 199	!old: 116us = 228
-#define zero_low_count 199  //100us
+#define zero_count 199 //100us = 199	!old: 116us = 228
 
 #define DCC_TMR_SIGNAL         TIMER1_COMPA_vect
 #define DCC_INIT_COMPARATOR    TCCR1A
@@ -155,22 +156,22 @@ Dauer des Teil-Nullbits: t ≥ 100 µs, normal: 116µs
 #define DCC_TMR_CONTROL_SET()  {DCC_TMR_CONTROL_REG = 1 << WGM12 | 1 << CS11;}
 #define DCC_TMR_COUNT_REG	   TCNT1
 #define DCC_TMR_MATCH_INT()    {TIMSK1 |= (1 << OCIE1A);} //Compare Match Interrupt Enable
-#define DCC_TMR_OUTP_CAPT_REG  OCR1A
+//#define DCC_TMR_OUTP_CAPT_REG  OCR1A
+#define last_timer  OCR1A
 
-#define DCC_TMR_OUTP_ONE_HALF()  {OCR1A = OCR1B = half_one_count;}
-#define DCC_TMR_OUTP_ONE_COUNT() {OCR1A = OCR1B = one_count;}
-#define DCC_TMR_OUTP_ZERO_HIGH() {OCR1A = OCR1B = zero_high_count;}
-#define DCC_TMR_OUTP_ZERO_LOW()  {OCR1A = OCR1B = zero_low_count;}
+#define TMR_SET_RAILCOM_STARTBIT()  {OCR1A = OCR1B = half_one_count;}
+#define TMR_SET_ONE() {OCR1A = OCR1B = one_count;}
+#define TMR_SET_ZERO() {OCR1A = OCR1B = zero_count;}
 
 /******************************************/
 //USE the Timer2 for the DCC Signal generation on AVR
 #else
-#define DCC_USE_TIMER2
 
 #define half_one_count 198  //29usec pulse
 #define one_count 141  //58usec pulse length = 141 = 0x8D
-#define zero_high_count 56  //100us = 56		!old: 116us = 0x1B (27) pulse length
-#define zero_low_count 56  //100us
+#define zero_count 56  //100us = 56		!old: 116us = 0x1B (27) pulse length
+
+uint8_t last_timer = one_count;	//last time set to timer
 
 #define DCC_TMR_SIGNAL         TIMER2_OVF_vect
 #define DCC_INIT_COMPARATOR    TCCR2A
@@ -178,14 +179,13 @@ Dauer des Teil-Nullbits: t ≥ 100 µs, normal: 116µs
 //Timer2 Settings: Timer Prescaler /8, mode 0
 //Timmer clock = 16MHz/8 = 2MHz oder 0,5usec
 #define DCC_TMR_CONTROL_SET()  {DCC_TMR_CONTROL_REG = 0 << CS22 | 1 << CS21 | 0 << CS20;}
-#define DCC_TMR_COUNT_REG	   TCNT2
+#define DCC_TMR_COUNT_REG	     TCNT2
 #define DCC_TMR_MATCH_INT()    {TIMSK2 = 1 << TOIE2;} //Overflow Interrupt Enable
 
 //note that there is a latency so take the last time of Timer2 also:
-#define DCC_TMR_OUTP_ONE_HALF()  {DCC_TMR_COUNT_REG = DCC_TMR_COUNT_REG + half_one_count; last_timer = half_one_count;}
-#define DCC_TMR_OUTP_ONE_COUNT() {DCC_TMR_COUNT_REG = DCC_TMR_COUNT_REG + one_count; last_timer = one_count;}
-#define DCC_TMR_OUTP_ZERO_HIGH() {DCC_TMR_COUNT_REG = DCC_TMR_COUNT_REG + zero_high_count; last_timer = zero_high_count;}
-#define DCC_TMR_OUTP_ZERO_LOW() {DCC_TMR_COUNT_REG = DCC_TMR_COUNT_REG + zero_low_count; last_timer = zero_low_count;}
+#define TMR_SET_RAILCOM_STARTBIT()  {DCC_TMR_COUNT_REG = DCC_TMR_COUNT_REG + half_one_count; last_timer = half_one_count;}
+#define TMR_SET_ONE() {DCC_TMR_COUNT_REG = DCC_TMR_COUNT_REG + one_count; last_timer = one_count;}
+#define TMR_SET_ZERO() {DCC_TMR_COUNT_REG = DCC_TMR_COUNT_REG + zero_count; last_timer = zero_count;}
 
 /******************************************/
 #endif

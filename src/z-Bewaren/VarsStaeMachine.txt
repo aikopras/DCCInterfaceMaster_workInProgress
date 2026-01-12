@@ -1,0 +1,25 @@
+
+	DCC_OUTPUT1_RC(); //LOW
+  DCC_OUTPUT2_RC(); //LOW
+
+	DCC_OUTPUT1_LOW(); //LOW				=> dccOutLow
+	DCC_OUTPUT2_LOW(); //HIGH       => dccOutInvLow
+	DCC_OUTPUT1_HIGH(); //HIGH
+	DCC_OUTPUT2_HIGH(); //LOW
+
+  DCC_TMR_OUTP_ZERO_LOW();
+  DCC_TMR_OUTP_ZERO_HIGH();
+  DCC_TMR_OUTP_ONE_HALF();
+  DCC_TMR_OUTP_ONE_COUNT();
+
+	digitalWrite(dccPacketEngine.dccRailPin, DCC_OUTPUT1_HIGH_legacy);
+  digitalWrite(dccPacketEngine.dccRailPin, DCC_OUTPUT1_RC_legacy);
+  digitalWrite(dccPacketEngine.dccRailPin, DCC_OUTPUT1_RC_legacy);
+  digitalWrite(dccPacketEngine.dccRailPin, DCC_OUTPUT1_LOW_legacy);
+  digitalWrite(dccPacketEngine.dccRailInvPin, DCC_OUTPUT2_HIGH_legacy);
+  digitalWrite(dccPacketEngine.dccRailInvPin, DCC_OUTPUT2_RC_legacy);
+  digitalWrite(dccPacketEngine.dccRailInvPin, DCC_OUTPUT2_LOW_legacy);
+
+
+  DCC_TMR_OUTP_CAPT_REG
+  TC_GetStatus(DCC_ARM_TC_TIMER, DCC_ARM_TC_CHANNEL);

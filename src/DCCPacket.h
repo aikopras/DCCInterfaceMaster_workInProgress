@@ -53,11 +53,12 @@ class DCCPacket
     uint8_t data[3];
     uint8_t size_repeat;  //a bit field! 0b11000000 = 0xC0 = size; 0x00111111 = 0x3F = repeat
     uint8_t kind;
-    
+
   public:
     DCCPacket(uint16_t decoder_address=0xFF /*, uint8_t decoder_address_kind=0x00*/);
-    
-    uint8_t getBitstream(uint8_t rawuint8_ts[]); //returns size of array.
+
+    uint8_t getBitstream(volatile uint8_t rawuint8_ts[]); //returns size of array.
+    //uint8_t getBitstream(uint8_t rawuint8_ts[]); //returns size of array.
 	inline uint8_t getSize(void) { return (size_repeat >> 6); }
     inline uint16_t getAddress(void) { return address; }
     //inline uint8_t getAddressKind(void) { return address_kind; }

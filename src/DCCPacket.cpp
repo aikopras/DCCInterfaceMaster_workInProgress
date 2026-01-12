@@ -4,7 +4,7 @@ DCCPacket::DCCPacket(uint16_t new_address) //: address(new_address), kind(idle_p
 {
 /*
   address_kind = DCC_SHORT_ADDRESS;			//short or long Address needs to use (1 - 127)
-  if (new_address > MAX_DCC_SHORT_ADDRESS)	//use long Address 
+  if (new_address > MAX_DCC_SHORT_ADDRESS)	//use long Address
 	address_kind = DCC_LONG_ADDRESS;
 */
   address = new_address;	//if address param is empty it's set per default to 0xFF!
@@ -15,7 +15,8 @@ DCCPacket::DCCPacket(uint16_t new_address) //: address(new_address), kind(idle_p
   kind = idle_packet_kind;
 }
 
-uint8_t DCCPacket::getBitstream(uint8_t rawbytes[]) //returns size of array.
+//uint8_t DCCPacket::getBitstream(uint8_t rawbytes[]) //returns size of array.
+uint8_t DCCPacket::getBitstream(volatile uint8_t rawbytes[]) //returns size of array.
 {
 	int total_size = 1; //minimum size
 
@@ -47,7 +48,7 @@ uint8_t DCCPacket::getBitstream(uint8_t rawbytes[]) //returns size of array.
 			XOR ^= rawbytes[i];
 		}
 		rawbytes[total_size] = XOR;
-		
+
 		return total_size + 1;
 	} else if (kind & ACCESSORY_PACKET_KIND_MASK) {
 		if ((kind == basic_accessory_packet_kind) || (kind == extended_accessory_packet_kind)) {
