@@ -75,26 +75,26 @@ DccPacketEngine::DccPacketEngine(){
 //******************************************************************************************************
 // 2. Declaration and initialisation of internal stuff
 //******************************************************************************************************
-// An enumerated type for keeping track of the state machine used in the ISR
-// Given the structure of a DCC packet, the ISR can be in one of the following states:
-// - dccPreamble: We send the preamble bits one by one, until all are done
-// - dccStartBitPacket: Each data byte is preceded by a starbit ('0').
-//   It may be a Packet-Startbit or a Datenbyte-Startbit
-// - dccData: Sending the current data byte
-// - dccStartBitData
-// - dccEndBit: After the final data byte  is sent, send a '0'.
+// Enumerated type describing the ISR state machine for DCC signal generation.
+// Each state spans one or more DCC bits (2 × 58 µs for a '1', or 2 × 100 µs for a '0').
+// A DCC bit consists of two halfbits; the flag 'firstHalfBit' indicates which half is active.
+// This allows the ISR to control timing, evaluate state transitions, and update variables.
+// The dccRailComStartBit is a special case: it is logically a '1' bit,
+// but the signal is suppressed halfway through the first halfbit (after 29 µs).
+// Therefore, the first halfbit of the RailCom start bit is split into two phases.
+// The flag 'firstHalfBitRC' indicates which phase of this RailCom halfbit is active.
+// The state 'dccPreambleStartBit' is used only immediately after the RailCom gap to
+// reset variables and reinitialize the DCC bit stream.
 typedef enum  {
-  dccRailComStartBit,
-  dccRailComGap,
-  dccPreamble,
-  dccStartBitPacket,
-  dccStartBitData,
-  dccData,
-  dccEndBit
+  dccRailComStartBit,                 // 29us pulse to indicate the start of the gap
+  dccRailComGap,                      // Together with the RailCom startbit, a gap of four 1s
+  dccPreambleStartBit,                // First bit of the preamble, Always 1
+  dccPreamble,                        // Sequence of 1 bits
+  dccStartBitPacket,                  // Bit between the preamble and first dccData byte. Always 0
+  dccStartBitData,                    // Bit between dccData bytes. Always 0
+  dccData,                            // Eight data bits. Each bit is a 0 or 1
+  dccEndBit                           // Last bit of the DCC packet. Always 1
 } DCC_output_state_t;
-
-// TODO currentPacket[6] = {0, 0, 0, 0, 0, 0};  meteen als idle packet initialiseren?
-// TODO: Retransmission IDLEs in SM in 1 packet doen
 
 // Define the structure for all variables used by the ISR
 struct DCC_ISR_State {
@@ -105,10 +105,13 @@ struct DCC_ISR_State {
   volatile uint8_t currentPacketSize = 0;                  // Number of bytes in current packet
   volatile bool firstHalfBit = true;	                     // The ISR starts with the first DCC Halfbit
   volatile bool firstHalfBitRC = true;	                   // And the first part of the Railcom start bit
+  volatile bool railComGapFlag = false;	                   // In the gap, this flag is guaranteed to be true
 };
 
 static DCC_ISR_State dccISR;                              // Create an instance of the struct for the ISR
 
+// TODO currentPacket[6] = {0, 0, 0, 0, 0, 0};  meteen als idle packet initialiseren?
+// TODO: Retransmission IDLEs in SM in 1 packet doen
 
 //******************************************************************************************************
 // DCC inline output functions
@@ -165,6 +168,7 @@ inline void dccOutInvTgl()     { if (dccRailInv.enable)  *dccRailInv.outtgl = dc
 //******************************************************************************
 // This is the Interrupt Service Routine (ISR) for Timer compare match.
 ISR(DCC_TIMER_INTERRUPT) {
+
   TCB1.INTFLAGS = TCB_CAPT_bm;   // Clear the interrupt flag
   // The ISR is entered everytime the timer expires.
   // Thus every 100us (0-bit), 58us (1-bit or 29us (RailCom start bit)
@@ -194,6 +198,7 @@ ISR(DCC_TIMER_INTERRUPT) {
           TMR_RAILCOM_STARTBIT();           // Set the timer, to trigger after 29us
           dccRailInv.enable = false;        // The Inverse pin will not toggle during the RC gap
           dccMonitor.enable = false;        // The Monitor pin will skip the toggle after 29us
+          dccISR.railComGapFlag = true;     // The RailCom gap just started
           // Next ISR (in 29us from now) we must handle the second part of the RailCom start bit.
           dccISR.firstHalfBitRC = false;
           // Since normal DCC halfbits are either 58us or 100us, we must stay in the first DCC halfbit.
@@ -214,8 +219,13 @@ ISR(DCC_TIMER_INTERRUPT) {
         // Nothing to do
       break;
 
+      case dccPreambleStartBit:
+        dccRailInv.enable = true;           // Restart the inverted signal
+        dccISR.railComGapFlag = false;      // Only now we are certain that the gap is over
+      break;
+
       case dccPreamble:
-        dccRailInv.enable = true;              // Only needed for the first preamble bit
+        // Nothing to doe
       break;
 
       // About to send a data byte, but have to preceed the data with a '0' (start bit).
@@ -308,9 +318,14 @@ ISR(DCC_TIMER_INTERRUPT) {
         dccISR.bitsRemaining--;
         if (dccISR.bitsRemaining == 0) {
           dccISR.bitsRemaining = PREAMBLE_LENGTH - RAILCOM_CUTOUT_LENGTH;
-          dccISR.state = dccPreamble;
+          dccISR.state = dccPreambleStartBit;
           dccRail.enable = true;              // Allow the normal pin to toggle
         }
+      break;
+
+      case dccPreambleStartBit:
+        dccISR.bitsRemaining--;
+        dccISR.state = dccPreamble;
       break;
 
       case dccPreamble:
@@ -340,8 +355,8 @@ ISR(DCC_TIMER_INTERRUPT) {
       break;
 
       case dccEndBit:
-        if (dccPacketEngine.serviceMode == 0) {       // Normal mode
-          if (dccPacketEngine.railCom) {
+        if (dccPacketEngine.serviceMode == 0) {    // Normal mode
+          if (dccPacketEngine.railCom) {           // We must generate a RailCom gap
             dccISR.state = dccRailComStartBit;
             dccISR.bitsRemaining = RAILCOM_CUTOUT_LENGTH;
           }
@@ -366,10 +381,20 @@ ISR(DCC_TIMER_INTERRUPT) {
 
 
 //******************************************************************************
-// RailCom helper routines
+// RailCom gap detection routine
 //******************************************************************************
+// This routine allows higher-layer software to determine whether a RailCom gap
+// is currently in progress, so that rail voltage and/or current measurements
+// can be safely controlled.
+// To avoid measurement errors, such measurements must not be performed during
+// a RailCom gap. Therefore, a conservative signaling approach is used.
+// The start of the gap is indicated immediately when the RailCom start bit begins,
+// while the end of the gap is indicated slightly after the actual gap.
+// This is implemented using the boolean flag 'railComGapFlag', which is set
+// at the start of the RailCom start bit and cleared at the first bit of the
+// subsequent preamble.
 bool DccPacketEngine::railComGap(void) {
-  return ((dccISR.state == dccRailComStartBit) || (dccISR.state == dccRailComGap));
+  return (dccISR.railComGapFlag);
 }
 
 //******************************************************************************
