@@ -48,6 +48,40 @@ void setup() {
 }
 
 
+bool readSerialCommand(Stream &ser, long &outValue) {
+  // This allows non-blocking reading of the input
+  // The "standard" Arduino int value = monitor.parseInt(); blocks the code for 1 second
+  static long value = 0;
+  static bool inNumber = false;
+  while (ser.available()) {
+    char c = ser.read();
+    if (c >= '0' && c <= '9') {
+      inNumber = true;
+      value = value * 10 + (c - '0');
+    }
+    else if (c == '\n' || c == '\r') {
+      if (inNumber) {
+        outValue = value;
+        value = 0;
+        inNumber = false;
+        return true;        // ✅ volledig commando ontvangen
+      }
+      // anders: lege ENTER, negeren
+    }
+    else {
+      // ander teken → beëindig eventueel lopend getal
+      if (inNumber) {
+        outValue = value;
+        value = 0;
+        inNumber = false;
+        return true;
+      }
+    }
+  }
+  return false;             // ❌ nog geen volledig commando
+}
+
+
 void sendAccessory() {
   if (!accessory) return;
   if (millis() - accTimer > 100) {
@@ -72,8 +106,8 @@ void sendLoco() {
 
 
 void loop() {
-  if (monitor.available() > 0) {
-    int value = monitor.parseInt();
+  long value;
+  if (readSerialCommand(monitor, value)) {
     monitor.print("Number received: ");
     monitor.println(value);
     switch(value) {
@@ -112,7 +146,9 @@ void loop() {
       return;  
     }
   }
-  //digitalWrite(9,HIGH);digitalWrite(9,LOW);
+
+
+  //digitalWrite(PIN_TEST1,HIGH);digitalWrite(PIN_TEST1,LOW);
   sendAccessory();
   sendLoco();
   dps.update();

@@ -153,7 +153,7 @@ void DCCPacketScheduler::loadEEPROMconfig(void)
 	FSTORAGE.commit();
 	#endif
 
-	dccPacketEngine.railCom = FSTORAGE.read(EEPROMRailCom);	//define if railcom cutout is active
+	dccPacketEngine.setRailCom(FSTORAGE.read(EEPROMRailCom));	//define if railcom cutout is active
 	ProgReadMode = FSTORAGE.read(EEPROMProgReadMode);	  // Auslese-Modus: 0=Nichts, 1=Bit, 2=Byte, 3=Beides
 	ProgRepeat = FSTORAGE.read(EEPROMProgRepeat);	      // Repaet for Packet Programming
 	RSTsRepeat = FSTORAGE.read(EEPROMRSTsRepeat);	      // Repaet for Reset start Packet
@@ -191,14 +191,14 @@ byte DCCPacketScheduler::getpower(void)
 //to de-/activate RailCom cutout rail output
 void DCCPacketScheduler::setrailcom(bool rc)
 {
-	dccPacketEngine.railCom = rc;
+	dccPacketEngine.setRailCom(rc);
 }
 
 //---------------------------------------------------------------------------------
 //return the State of RailCom cutout output
 bool DCCPacketScheduler::getrailcom(void)
 {
-	return dccPacketEngine.railCom;
+  return dccPacketEngine.getRailCom();
 }
 
 //---------------------------------------------------------------------------------

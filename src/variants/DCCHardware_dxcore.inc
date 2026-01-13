@@ -67,7 +67,6 @@ DccPacketEngine::DccPacketEngine(){
   for(int i=0; i<MaxDccSize; i++) {data[i] = 0;}
   serviceMode = 0;                                // This is not a Servoce Mode packet
   serviceModeRepeat = 10;	                        // Initial value for Service Mode Packets repeats
-  railCom = false;	                              // Should we have a Railcom cut-out in the preamble?
   powerStatus = false;                          	// Set the railsignal on/off
 }
 
@@ -106,6 +105,7 @@ struct DCC_ISR_State {
   volatile bool firstHalfBit = true;	                     // The ISR starts with the first DCC Halfbit
   volatile bool firstHalfBitRC = true;	                   // And the first part of the Railcom start bit
   volatile bool railComGapFlag = false;	                   // In the gap, this flag is guaranteed to be true
+  volatile bool railCom = true;                            // Should we generate a RailCom gap?
 };
 
 static DCC_ISR_State dccISR;                              // Create an instance of the struct for the ISR
@@ -356,7 +356,7 @@ ISR(DCC_TIMER_INTERRUPT) {
 
       case dccEndBit:
         if (dccPacketEngine.serviceMode == 0) {    // Normal mode
-          if (dccPacketEngine.railCom) {           // We must generate a RailCom gap
+          if (dccISR.railCom) {                    // We must generate a RailCom gap
             dccISR.state = dccRailComStartBit;
             dccISR.bitsRemaining = RAILCOM_CUTOUT_LENGTH;
           }
@@ -383,6 +383,14 @@ ISR(DCC_TIMER_INTERRUPT) {
 //******************************************************************************
 // RailCom gap detection routine
 //******************************************************************************
+void DccPacketEngine::setRailCom(bool active) { // Enable / disable generation of the RailCom gap
+  dccISR.railCom = active;
+}
+
+bool DccPacketEngine::getRailCom(void) { // Is generation of the RailCom gap enabled?
+  return dccISR.railCom;
+}
+
 // This routine allows higher-layer software to determine whether a RailCom gap
 // is currently in progress, so that rail voltage and/or current measurements
 // can be safely controlled.
@@ -394,7 +402,7 @@ ISR(DCC_TIMER_INTERRUPT) {
 // at the start of the RailCom start bit and cleared at the first bit of the
 // subsequent preamble.
 bool DccPacketEngine::railComGap(void) {
-  return (dccISR.railComGapFlag);
+  return dccISR.railComGapFlag;
 }
 
 //******************************************************************************

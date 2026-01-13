@@ -24,11 +24,10 @@ class DccPacketEngine {
                                                   // The schedular may WRITE this number, using CV value from EEPROM
 
     // RailCom specific
+    void setRailCom(bool active);                 // Enable / disable generation of the RailCom gap
+    bool getRailCom(void);                        // Is generation of the RailCom gap enabled?
+    bool railComGap(void);                        // Does the DCC Harware generate a Railcom gap at this moment?
 
-    bool railComGap(void);                        // Is the DCCHarware currently generating a Railcom gap?
-
-    volatile bool railCom;	                      // Should we provide a cut out of four bit in the preamble
-                                                  // The schedular may READ this flag
     // Init, start and stop
     void StopOutputSignal(void);                  // Level of DCC rail output pins become LOW (no impact on dccMonitorPin)
     void RunOutputSignal(void);                   // Level of DCC rail output pins become HIGH (no impact on dccMonitorPin)
