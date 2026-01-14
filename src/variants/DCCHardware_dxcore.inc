@@ -40,6 +40,29 @@
 // and one for the second. During the first halfbit, the focus is mainly on configuring the next
 // timer interval (e.g. for ‘0’, ‘1’, or timing the Railcom gap). During the second halfbit, the
 // timer remains unchanged and the state machine is advanced to the next logical DCC state.
+//
+// NOTE ON TIMING AND PIN TOGGLE LATENCY
+// ------------------------------------
+// This driver generates the DCC waveform fully in software using a TCB timer and bit-banging,
+// in order to allow maximum flexibility in the choice of output pins (normal, inverted and monitor
+// outputs can be mapped to any pin).
+// Because the DCC outputs are toggled via C++ inline functions using RAM-based structs,
+// pointer dereferencing and enable checks, each pin toggle requires multiple CPU instructions.
+// At 24 MHz this results in approximately 20 CPU cycles (~875 ns) between toggling the inverted
+// and normal rail outputs.
+//
+// This delay is relatively large compared to the ideal DCC zero-crossing and deforms the DCC waveform.
+//
+// Possible optimizations to reduce this delay include:
+//  - Using direct port access with hard-coded ports and bit masks
+//  - Removing runtime enable checks
+//  - Toggling both rail pins simultaneously when located on the same port
+//  - Using hardware-based toggling (TCA / EVSYS / CCL)
+//
+// A separate TCA-based driver is provided which uses hardware pin toggling
+// and produces an ideal, simultaneous zero-crossing, but at the cost of
+// reduced flexibility in pin selection.
+//
 //******************************************************************************************************
 #include <Arduino.h>
 #include "../DCCHardware.h"
@@ -67,7 +90,6 @@ DccPacketEngine::DccPacketEngine(){
   for(int i=0; i<MaxDccSize; i++) {data[i] = 0;}
   serviceMode = 0;                                // This is not a Servoce Mode packet
   serviceModeRepeat = 10;	                        // Initial value for Service Mode Packets repeats
-  powerStatus = false;                          	// Set the railsignal on/off
 }
 
 
@@ -106,6 +128,7 @@ struct DCC_ISR_State {
   volatile bool firstHalfBitRC = true;	                   // And the first part of the Railcom start bit
   volatile bool railComGapFlag = false;	                   // In the gap, this flag is guaranteed to be true
   volatile bool railCom = true;                            // Should we generate a RailCom gap?
+  volatile bool railPower;	                               // Controls if the railsignal is on/off
 };
 
 static DCC_ISR_State dccISR;                              // Create an instance of the struct for the ISR
@@ -143,15 +166,16 @@ inline void dccOutInvLow()     { if (dccRailInv.enable)  *dccRailInv.outclr = dc
 inline void dccOutInvHigh()    { if (dccRailInv.enable)  *dccRailInv.outset = dccRailInv.bit; }
 inline void dccOutInvTgl()     { if (dccRailInv.enable)  *dccRailInv.outtgl = dccRailInv.bit; }
 
-/* TCB clock = CLK_PER = F_CPU (typically 24 MHz) */
-/* 1 tick = 1 / F_CPU seconds */
-/* The timer counts are calculated from the selected clockspeed, and are therefore dynamic */
+// TCB clock = CLK_PER = F_CPU (typically 24 MHz)
+// 1 tick = 1 / F_CPU seconds */
+// The timer counts are calculated from the selected clockspeed, and are therefore dynamic
 #define TICKS_PER_US               (F_CPU / 1000000UL)
 #define half_one_count             (TICKS_PER_US * (29))
 #define one_count                  (TICKS_PER_US * (58))
 #define zero_count                 (TICKS_PER_US * (116))
 
-/* We use TCB1 in periodic interrupt mode and reload CCMP each time */
+// We use TCB1 in periodic interrupt mode and reload CCMP each time
+// Switching to other TCBs should be trivial
 #define TMR_RAILCOM_STARTBIT()     { TCB1.CCMP = half_one_count; }
 #define TMR_ONE()                  { TCB1.CCMP = one_count; }
 #define TMR_ZERO()                 { TCB1.CCMP = zero_count; }
@@ -168,28 +192,26 @@ inline void dccOutInvTgl()     { if (dccRailInv.enable)  *dccRailInv.outtgl = dc
 //******************************************************************************
 // This is the Interrupt Service Routine (ISR) for Timer compare match.
 ISR(DCC_TIMER_INTERRUPT) {
-
+  uint8_t mask;                  // helper to determine which pin to toggle
   TCB1.INTFLAGS = TCB_CAPT_bm;   // Clear the interrupt flag
+  //
   // The ISR is entered everytime the timer expires.
   // Thus every 100us (0-bit), 58us (1-bit or 29us (RailCom start bit)
   //
-  // PART 1: TOGGLE THE PINS
   // ===========================================================================
-  // This part is only needed for cases where we want to perform bit-banging
-  uint8_t mask;                  // helper to determine the pin to toggle
-  dccOutTgl();                   // Normal DCC signal
-  dccOutInvTgl();                // Inverted DCC signal
-  dccMonTgl();                   // Monitor signal
-
-  // ===========================================================================
-  // PART 2A: FIRST HALFBIT: CHANGE TIMERS (IF NEEDED)
+  // PART 1: FIRST HALFBIT: TOGGLE PINS AND CHANGE TIMERS (IF NEEDED)
   // ===========================================================================
   if (dccISR.firstHalfBit) {
-    // We now handle the first halfbit, which means the pin is high.
-    // During the first halfbit we may change the next timer value.
-    // Such timer changes are not needed during the second half bit.
-    // A special case is the RailCom startbit, which breaks the pattern that
-    // halfbits are 59us or 100us
+    // The H-bridge must never have both sides active at the same time, as this
+    // would result in a short circuit and destroy the H-bridge.
+    // Therefore, the normal and inverted rail pins must never be high
+    // simultaneously. At the start of the first half-bit, the normal rail pin
+    // is low while the inverted rail pin is high. For this reason, during the
+    // first half-bit, the inverted rail pin must be toggled first, followed
+    // by the normal rail pin.
+    dccOutInvTgl();                // Inverted DCC signal
+    dccOutTgl();                   // Normal DCC signal
+    dccMonTgl();                   // Monitor signal
 
     switch (dccISR.state) {
 
@@ -220,7 +242,8 @@ ISR(DCC_TIMER_INTERRUPT) {
       break;
 
       case dccPreambleStartBit:
-        dccRailInv.enable = true;           // Restart the inverted signal
+        if (dccISR.railPower)               // Only if their there should be power on the rails
+          dccRailInv.enable = true;         // We restart the inverted signal
         dccISR.railComGapFlag = false;      // Only now we are certain that the gap is over
       break;
 
@@ -299,27 +322,35 @@ ISR(DCC_TIMER_INTERRUPT) {
   }  // END firstHalfBit
 
   // ===========================================================================
-  // PART 2B: SECOND HALFBIT: UPDATE THE STATE MACHINE
+  // PART 2: SECOND HALFBIT: UPDATE THE STATE MACHINE
   // ===========================================================================
   else {
-    // In the second half bit we decide if we have to change the DCC state.
-    // Here the DCC signal is low, and the timer value doesn't need to be changed.
-    // An exception, however, is the RailCom startbit.
+    // The H-bridge must never have both sides active at the same time, as this
+    // would result in a short circuit and destroy the H-bridge.
+    // Therefore, the normal and inverted rail pins must never be high
+    // simultaneously. At the start of the second half-bit, the normal rail pin
+    // is high while the inverted rail pin is low. For this reason, during the
+    // first half-bit, the normal rail pin must be toggled first, followed
+    // by the inverted rail pin.
+    dccOutTgl();                   // Normal DCC signal
+    dccOutInvTgl();                // Inverted DCC signal
+    dccMonTgl();                   // Monitor signal
 
     switch (dccISR.state) {
 
       case dccRailComStartBit:
         TMR_ONE();
-        dccISR.bitsRemaining = RAILCOM_CUTOUT_LENGTH - 1;
+        dccISR.bitsRemaining--;
         dccISR.state = dccRailComGap;
       break;
 
       case dccRailComGap:
         dccISR.bitsRemaining--;
-        if (dccISR.bitsRemaining == 0) {
+        if (dccISR.bitsRemaining == 0) {      // Last half of last RailCom Gap bit
+          if (dccISR.railPower)               // Only if the rails may be powered
+            dccRail.enable = true;            // The normal pin is allowed to toggle again
           dccISR.bitsRemaining = PREAMBLE_LENGTH - RAILCOM_CUTOUT_LENGTH;
           dccISR.state = dccPreambleStartBit;
-          dccRail.enable = true;              // Allow the normal pin to toggle
         }
       break;
 
@@ -361,13 +392,15 @@ ISR(DCC_TIMER_INTERRUPT) {
             dccISR.bitsRemaining = RAILCOM_CUTOUT_LENGTH;
           }
           else {
-            dccISR.state = dccPreamble;
-            dccISR.bitsRemaining = PREAMBLE_LENGTH;  // Normal preamble (RCN 211)
+            if (dccISR.railPower)                   // Only if the rails may be powered
+              dccRail.enable = true;                // The normal pin is allowed to toggle again
+            dccISR.state = dccPreambleStartBit;
+            dccISR.bitsRemaining = PREAMBLE_LENGTH; // Normal preamble (RCN 211)
             }
           }
         else {
           dccISR.state = dccPreamble;
-          dccISR.bitsRemaining = PREAMBLE_LENGTH_SM;  // Long preamble (RCN 216)
+          dccISR.bitsRemaining = PREAMBLE_LENGTH_SM; // Long preamble (RCN 216)
         }
       break;
 
@@ -381,7 +414,7 @@ ISR(DCC_TIMER_INTERRUPT) {
 
 
 //******************************************************************************
-// RailCom gap detection routine
+// RailCom specific routines
 //******************************************************************************
 void DccPacketEngine::setRailCom(bool active) { // Enable / disable generation of the RailCom gap
   dccISR.railCom = active;
@@ -409,14 +442,27 @@ bool DccPacketEngine::railComGap(void) {
 // Start / Stop
 //******************************************************************************
 void DccPacketEngine::StopOutputSignal() {
-	powerStatus = false;
-  // Both DCC output pins must be made inactive / low
-	digitalWrite(dccRailPin, LOW);
-	if (dccRailInvPin != 0xFF) digitalWrite(dccRailInvPin, LOW);
+  // This routine may be called when a short circuit is detected or when the user
+  // presses the emergency stop button. In that case the normal and inverted DCC
+  // outputs must stop toggling and be forced LOW, so no DCC power is present on
+  // the rails. The monitor output is not disabled, allowing switches and other
+  // accessories to remain operational.
+  // TODO: Dit is waarschijnlijk niet goed, want in de tussentijd kan er een ISR komen
+  //
+  dccOutLow();
+  dccOutInvLow();
+  dccRail.enable = false;
+  dccRailInv.enable = false;
+	dccISR.railPower = false;
 }
 
 void DccPacketEngine::RunOutputSignal() {
-	powerStatus = true;
+  // Enabling power is delicate, because we must ensure that the normal and
+  // inverted DCC signals always remain complementary and are never high at the
+  // same time. For this reason, toggling is enabled at the packet end bit:
+  // during the first half-bit the inverted signal is allowed to toggle again,
+  // and during the second half-bit the normal signal is re-enabled.
+	dccISR.railPower = true;
 }
 
 

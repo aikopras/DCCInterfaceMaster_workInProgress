@@ -33,8 +33,6 @@ class DccPacketEngine {
     void RunOutputSignal(void);                   // Level of DCC rail output pins become HIGH (no impact on dccMonitorPin)
     void setupWaveformGenerator();                // Setup and start the waveform generator (ISR)
 
-    volatile bool powerStatus;	                  // Controls if the railsignal is on/off
-
     DccPacketEngine();                            // Constructor declaration
 
   private:
