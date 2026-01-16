@@ -72,6 +72,7 @@
 #define PREAMBLE_LENGTH_SM 20       // see RCN-216 (Ausgabe 24.11.2025)
 #define RAILCOM_CUTOUT_LENGTH 4	  	// see RCN-217 (Ausgabe 24.11.2025)
 
+
 //******************************************************************************************************
 // 1. Declaration and initialisation (constructor) of external object
 //******************************************************************************************************
@@ -88,8 +89,6 @@ DccPacketEngine::DccPacketEngine(){
   isWaiting = true;                               // notify to update() that we need the first packet
   dataSize = 0;
   for(int i=0; i<MaxDccSize; i++) {data[i] = 0;}
-  serviceMode = 0;                                // This is not a Servoce Mode packet
-  serviceModeRepeat = 10;	                        // Initial value for Service Mode Packets repeats
 }
 
 
@@ -126,18 +125,19 @@ struct DCC_ISR_State {
   volatile uint8_t currentPacketSize = 0;                  // Number of bytes in current packet
   volatile bool firstHalfBit = true;	                     // The ISR starts with the first DCC Halfbit
   volatile bool firstHalfBitRC = true;	                   // And the first part of the Railcom start bit
+  volatile bool smEnabled = false;                         // SM active (long preamble, resets, SM flow allowed)
+  volatile uint8_t smRepeatsRemaining = 0;                 // Number of retransmissions left for this SM packet
+  volatile uint8_t smMaxRepeats = 10;	                     // Number of SM retransmissions after first send
   volatile bool railComGapFlag = false;	                   // In the gap, this flag is guaranteed to be true
   volatile bool railCom = true;                            // Should we generate a RailCom gap?
-  volatile bool railPower;	                               // Controls if the railsignal is on/off
+  volatile bool railPower = false;	                       // Controls if the railsignal is on/off
 };
 
 static DCC_ISR_State dccISR;                              // Create an instance of the struct for the ISR
 
-// TODO currentPacket[6] = {0, 0, 0, 0, 0, 0};  meteen als idle packet initialiseren?
-// TODO: Retransmission IDLEs in SM in 1 packet doen
 
 //******************************************************************************************************
-// DCC inline output functions
+// Hardware specific functions
 //******************************************************************************************************
 // Direct register access for pin changes
 // Create a structure for each output pin. This structure provides direct access
@@ -185,6 +185,85 @@ inline void dccOutInvTgl()     { if (dccRailInv.enable)  *dccRailInv.outtgl = dc
 #define DEBUG1 digitalWrite(PIN_PB3, HIGH); digitalWrite(PIN_PB3, LOW);
 #define DEBUG2 digitalWrite(PIN_PB4, HIGH); digitalWrite(PIN_PB4, LOW);
 #define DEBUG3 digitalWrite(PIN_PB5, HIGH); digitalWrite(PIN_PB5, LOW);
+
+
+//******************************************************************************
+// setup_DCC_waveform_generator
+//******************************************************************************
+// Initialise a DCC output pin for direct register access (DxCore)
+// - pinObj: the DccOut_t object that stores the registers and bit mask
+// - arduinoPin: any Arduino pin number, 0xFF if the pin is not set
+inline void initDccPin(DccOut_t &pinObj, uint8_t arduinoPin) {
+  if (arduinoPin != 0xFF) {
+    pinMode(arduinoPin, OUTPUT);                  // Port is output
+    uint8_t port = digitalPinToPort(arduinoPin);  // Mapping from pin to port
+    volatile PORT_t *p = portToPortStruct(port);  // Local pointer to the port
+    pinObj.outset = &p->OUTSET;                   // Register to set output
+    pinObj.outclr = &p->OUTCLR;                   // Register to clear output
+    pinObj.outtgl = &p->OUTTGL;                   // Register to toggle output
+    pinObj.bit = digitalPinToBitMask(arduinoPin); // pin bitmask
+    pinObj.enable = false;                        // Toggle pin not allowed
+  }
+  else {
+    pinObj.outset = nullptr;
+    pinObj.outclr = nullptr;
+    pinObj.outtgl = nullptr;
+    pinObj.bit = 0;
+    pinObj.enable = false;
+  }
+}
+
+
+void DccPacketEngine::setupWaveformGenerator() {
+  // We must stop the timer, since it is using the same registers as we may
+  // subsequently modify. If we don't stop the timer first, the code may crash.
+  TCB1.CTRLA = 0;                       // stop + reset control A
+  // Initialise the structure with registers and mask for the three pins
+  // If a pin is not used (0xFF), the pointers to the registers will be cleared
+  initDccPin(dccRail, dccRailPin);
+  initDccPin(dccRailInv, dccRailInvPin);
+  initDccPin(dccMonitor, dccMonitorPin);
+  // DCC_USES_TCB1 - DxCore
+  TCB1.CTRLB = TCB_CNTMODE_INT_gc;      // periodic interrupt mode
+  TCB1.CCMP  = one_count;               // start with "1" timing
+  TCB1.INTFLAGS = TCB_CAPT_bm;          // clear pending interrupt flag
+  TCB1.INTCTRL  = TCB_CAPT_bm;          // enable capture/timeout interrupt
+  TCB1.CTRLA = TCB_CLKSEL_CLKDIV1_gc | TCB_ENABLE_bm;   // CLK_PER, enable
+  // Enable the three output channels
+  dccRail.enable = true;
+  dccRailInv.enable = true;
+  dccMonitor.enable = true;
+  // Set the three pins to their start value
+  dccOutLow();
+  dccOutInvHigh();
+  dccMonLow();
+  //dccOutInvTgl();                       // Inverted DCC signal
+
+  // Start with a DCC low-signal
+  TMR_ZERO();
+}
+
+
+//******************************************************************************
+// Internal support routines
+//******************************************************************************
+static inline void startServiceModeRepeats() {
+  // Called once when a new SM packet is accepted.
+  // Sets the repeat counter for this packet.
+  dccISR.smRepeatsRemaining = dccISR.smMaxRepeats;
+}
+
+static inline void advanceServiceModeRepeat() {
+  // Called when we resend the same SM packet again.
+  // When this reaches 0, a new packet may be accepted.
+  if (dccISR.smRepeatsRemaining > 0)
+    dccISR.smRepeatsRemaining--;
+}
+
+static inline bool isServiceModeAckPacket(volatile uint8_t *packet) {
+  // RCN-216: Service Mode packets have 0111xxxx as first byte
+  return (packet[0] & 0xF0) == 0b01110000;
+}
 
 
 //******************************************************************************
@@ -255,10 +334,9 @@ ISR(DCC_TIMER_INTERRUPT) {
       // Send that '0', then move to dccData
       case dccStartBitPacket:
         TMR_ZERO();
-        // TODO: probably move this to another state?
         // Check if we have received a next packet to send?
-        if (dccPacketEngine.isWaiting) {	//ERROR! - We didn't get the next packet until now!
-          if (dccPacketEngine.serviceMode > 0) {
+        if (dccPacketEngine.isWaiting) {	// We didn't get the next packet until now!
+          if (dccPacketEngine.isServiceModeEnabled()) {
             //load a default reset packet!
             dccISR.currentPacket[0] = 0;
             dccISR.currentPacket[1] = 0;
@@ -275,7 +353,7 @@ ISR(DCC_TIMER_INTERRUPT) {
         }
         else {
           // We received a new packet.  Can we use it, or are we still retransmitting SM packets?
-          if ((dccPacketEngine.serviceMode == 0xFF) || (dccPacketEngine.serviceMode == 0)) {
+          if (!dccPacketEngine.isServiceModeRepeating()) {
             // Yes, we can copy
             dccISR.currentPacket[0] = dccPacketEngine.data[0];
             dccISR.currentPacket[1] = dccPacketEngine.data[1];
@@ -284,21 +362,21 @@ ISR(DCC_TIMER_INTERRUPT) {
             dccISR.currentPacket[4] = dccPacketEngine.data[4];
             dccISR.currentPacket[5] = dccPacketEngine.data[5];
             dccISR.currentPacketSize = dccPacketEngine.dataSize;
-            // TODO: I assume the SM retransmission better moves to the packet scheduler.
-            // In addition, I do not believe this code is correct
-            // In SM, there MUST be 9at least) 3 IDLE packets between SM packets.
             // Before we tell the user that we can accept the next packet, we first check
             // if this is a SM packet that must be retransmitted. Retransmissions are
             // needed to make SM-ACK responses more reliable. We therefore check if this is
-            // a SM packet, and if yes, set the serviceMode to 0xFF minus the number
-            // of required retransmissions.
-            if ((dccISR.currentPacket[0] >> 4) == 0b0111) 		// CV read/write packet with ACK response!
-              dccPacketEngine.serviceMode = 0xFF - dccPacketEngine.serviceModeRepeat;
+            // a SM packet.
+            if (isServiceModeAckPacket(dccISR.currentPacket)) {
+             	// CV read/write packet with ACK response!
+              startServiceModeRepeats();
+            }
           }
-          // No, we couldn't copy, since we still need to retransmit SM packets.
-          else dccPacketEngine.serviceMode++;	//count of internal Service Mode Packet repeat
+          else  {
+            // No, we couldn't copy, since we still need to retransmit SM packets.
+            advanceServiceModeRepeat();
+          }
         }
-        if ((dccPacketEngine.serviceMode == 0) || (dccPacketEngine.serviceMode == 0xFF))
+        if (!dccPacketEngine.isServiceModeRepeating())
           dccPacketEngine.isWaiting = true;  // we can accept the next packet
       break;
 
@@ -386,7 +464,7 @@ ISR(DCC_TIMER_INTERRUPT) {
       break;
 
       case dccEndBit:
-        if (dccPacketEngine.serviceMode == 0) {    // Normal mode
+        if (!dccPacketEngine.isServiceModeEnabled()) {
           if (dccISR.railCom) {                    // We must generate a RailCom gap
             dccISR.state = dccRailComStartBit;
             dccISR.bitsRemaining = RAILCOM_CUTOUT_LENGTH;
@@ -414,7 +492,48 @@ ISR(DCC_TIMER_INTERRUPT) {
 
 
 //******************************************************************************
-// RailCom specific routines
+// Service Mode interface methods
+//******************************************************************************
+void DccPacketEngine::enterServiceMode(void) {
+  // Enable Service Mode behaviour (long preamble, reset packets, SM flow).
+  dccISR.smEnabled = true;
+}
+
+void DccPacketEngine::leaveServiceMode(void) {
+  // Leave Service Mode immediately. Ongoing SM retransmissions are cancelled.
+  dccISR.smEnabled = false;
+  dccISR.smRepeatsRemaining = 0;
+}
+
+bool DccPacketEngine::isServiceModeEnabled(void) {
+  // Returns true if the system is currently in Service Mode.
+  return dccISR.smEnabled;
+}
+
+void DccPacketEngine::setServiceModeMaxRepeats(uint8_t value) {
+  dccISR.smMaxRepeats = value;
+  // TODO: ALLEEN VOOR TESTEN
+  dccISR.smMaxRepeats = 15;
+}
+
+bool DccPacketEngine::isFirstServiceModePacket(void) {
+  // True only for the first transmission of a new SM packet.
+  return dccISR.smEnabled && (dccISR.smRepeatsRemaining == dccISR.smMaxRepeats);
+}
+
+bool DccPacketEngine::isServiceModeRepeating(void) {
+  // True while the ISR is busy retransmitting the current SM packet.
+  return dccISR.smEnabled && (dccISR.smRepeatsRemaining > 0);
+}
+
+void DccPacketEngine::stopServiceModeRepeats(void) {
+  // Stop retransmission of the current SM packet (e.g. after ACK).
+  dccISR.smRepeatsRemaining = 0;
+}
+
+
+//******************************************************************************
+// RailCom interface methods
 //******************************************************************************
 void DccPacketEngine::setRailCom(bool active) { // Enable / disable generation of the RailCom gap
   dccISR.railCom = active;
@@ -438,6 +557,7 @@ bool DccPacketEngine::railComGap(void) {
   return dccISR.railComGapFlag;
 }
 
+
 //******************************************************************************
 // Start / Stop
 //******************************************************************************
@@ -447,13 +567,13 @@ void DccPacketEngine::StopOutputSignal() {
   // outputs must stop toggling and be forced LOW, so no DCC power is present on
   // the rails. The monitor output is not disabled, allowing switches and other
   // accessories to remain operational.
-  // TODO: Dit is waarschijnlijk niet goed, want in de tussentijd kan er een ISR komen
-  //
+  noInterrupts();
   dccOutLow();
   dccOutInvLow();
   dccRail.enable = false;
   dccRailInv.enable = false;
 	dccISR.railPower = false;
+  interrupts();
 }
 
 void DccPacketEngine::RunOutputSignal() {
@@ -463,61 +583,4 @@ void DccPacketEngine::RunOutputSignal() {
   // during the first half-bit the inverted signal is allowed to toggle again,
   // and during the second half-bit the normal signal is re-enabled.
 	dccISR.railPower = true;
-}
-
-
-//******************************************************************************
-// setup_DCC_waveform_generator
-//******************************************************************************
-// Initialise a DCC output pin for direct register access (DxCore)
-// - pinObj: the DccOut_t object that stores the registers and bit mask
-// - arduinoPin: any Arduino pin number, 0xFF if the pin is not set
-inline void initDccPin(DccOut_t &pinObj, uint8_t arduinoPin) {
-  if (arduinoPin != 0xFF) {
-    pinMode(arduinoPin, OUTPUT);                  // Port is output
-    uint8_t port = digitalPinToPort(arduinoPin);  // Mapping from pin to port
-    volatile PORT_t *p = portToPortStruct(port);  // Local pointer to the port
-    pinObj.outset = &p->OUTSET;                   // Register to set output
-    pinObj.outclr = &p->OUTCLR;                   // Register to clear output
-    pinObj.outtgl = &p->OUTTGL;                   // Register to toggle output
-    pinObj.bit = digitalPinToBitMask(arduinoPin); // pin bitmask
-    pinObj.enable = false;                        // Toggle pin not allowed
-  }
-  else {
-    pinObj.outset = nullptr;
-    pinObj.outclr = nullptr;
-    pinObj.outtgl = nullptr;
-    pinObj.bit = 0;
-    pinObj.enable = false;
-  }
-}
-
-
-void DccPacketEngine::setupWaveformGenerator() {
-  // We must stop the timer, since it is using the same registers as we may
-  // subsequently modify. If we don't stop the timer first, the code may crash.
-  TCB1.CTRLA = 0;                       // stop + reset control A
-  // Initialise the structure with registers and mask for the three pins
-  // If a pin is not used (0xFF), the pointers to the registers will be cleared
-  initDccPin(dccRail, dccRailPin);
-  initDccPin(dccRailInv, dccRailInvPin);
-  initDccPin(dccMonitor, dccMonitorPin);
-  // DCC_USES_TCB1 - DxCore
-  TCB1.CTRLB = TCB_CNTMODE_INT_gc;      // periodic interrupt mode
-  TCB1.CCMP  = one_count;               // start with "1" timing
-  TCB1.INTFLAGS = TCB_CAPT_bm;          // clear pending interrupt flag
-  TCB1.INTCTRL  = TCB_CAPT_bm;          // enable capture/timeout interrupt
-  TCB1.CTRLA = TCB_CLKSEL_CLKDIV1_gc | TCB_ENABLE_bm;   // CLK_PER, enable
-  // Enable the three output channels
-  dccRail.enable = true;
-  dccRailInv.enable = true;
-  dccMonitor.enable = true;
-  // Set the three pins to their start value
-  dccOutLow();
-  dccOutInvHigh();
-  dccMonLow();
-  //dccOutInvTgl();                       // Inverted DCC signal
-
-  // Start with a DCC low-signal
-  TMR_ZERO();
 }

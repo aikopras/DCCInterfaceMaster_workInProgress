@@ -153,12 +153,12 @@ void DCCPacketScheduler::loadEEPROMconfig(void)
 	FSTORAGE.commit();
 	#endif
 
-	dccPacketEngine.setRailCom(FSTORAGE.read(EEPROMRailCom));	//define if railcom cutout is active
-	ProgReadMode = FSTORAGE.read(EEPROMProgReadMode);	  // Auslese-Modus: 0=Nichts, 1=Bit, 2=Byte, 3=Beides
-	ProgRepeat = FSTORAGE.read(EEPROMProgRepeat);	      // Repaet for Packet Programming
-	RSTsRepeat = FSTORAGE.read(EEPROMRSTsRepeat);	      // Repaet for Reset start Packet
-	RSTcRepeat = FSTORAGE.read(EEPROMRSTcRepeat);	      // Repaet for Reset contingue Packet
-  dccPacketEngine.serviceModeRepeat = ProgRepeat;          // Repeat for SM packets is done by the ISR itself
+	dccPacketEngine.setRailCom(FSTORAGE.read(EEPROMRailCom));	// define if railcom cutout is active
+	ProgReadMode = FSTORAGE.read(EEPROMProgReadMode);	        // Auslese-Modus: 0=Nichts, 1=Bit, 2=Byte, 3=Beides
+	ProgRepeat = FSTORAGE.read(EEPROMProgRepeat);	            // Repaet for Packet Programming
+	RSTsRepeat = FSTORAGE.read(EEPROMRSTsRepeat);	            // Repaet for Reset start Packet
+	RSTcRepeat = FSTORAGE.read(EEPROMRSTcRepeat);	            // Repaet for Reset contingue Packet
+  dccPacketEngine.setServiceModeMaxRepeats(ProgRepeat);     // Repeat for SM packets is done by the ISR itself
 }
 
 //---------------------------------------------------------------------------------
@@ -1106,11 +1106,13 @@ bool DCCPacketScheduler::eStop(uint16_t address)
 //checks queues, puts whatever's pending on the rails via global current_packet
 void DCCPacketScheduler::update(void) {
 	//CV read packet is on Prog.Track:
-	if ((dccPacketEngine.serviceMode > 0) && (dccPacketEngine.serviceMode < 0xFF)) {
+  if (dccPacketEngine.isServiceModeRepeating()) {
 		if (notifyCurrentSence) {	//get the Base rail current
 			uint16_t current_load_now = notifyCurrentSence();
-			if (dccPacketEngine.serviceMode == (0xFF - ProgRepeat)) {	//first packet - base current!
-				//get base current voltage:
+// TODO: AANPASSEN
+//			if (dccPacketEngine.serviceMode == (0xFF - ProgRepeat)) {	//first packet - base current!
+      if (dccPacketEngine.isFirstServiceModePacket()) {
+        // First SM packet - get base current voltage:
 				if (current_ack_status != WAIT_FOR_ACK) {
 					LASTVAmpSence = current_load_now;  //store the last value
 					current_ack_status = WAIT_FOR_ACK;
@@ -1185,7 +1187,7 @@ void DCCPacketScheduler::update(void) {
 							cv_read_count = 0;		//counter for try to read data (repeat)
 							LASTVAmpSence = 0;		//reset
 							COUNTVAmpSence = 0;		//reset normal mA level
-							dccPacketEngine.serviceMode = 0xFF;
+              dccPacketEngine.enterServiceMode();
 							//Send Start Reset Packets:
 							opsDecoderReset(RSTsRepeat);	//send first a Reset Start Packet
 							ops_programmming_queue.readPacket(&p);
@@ -1318,7 +1320,7 @@ void DCCPacketScheduler::update(void) {
 						case ProgEnde: {
 							//switch to "normal" Mode!
 							setpower(ON, true);		//force to leave Service Mode!
-							dccPacketEngine.serviceMode = 0;
+              dccPacketEngine.leaveServiceMode();
 							return;	//no new packet here!
 						break; }
 					}
@@ -1338,7 +1340,7 @@ void DCCPacketScheduler::update(void) {
 			}	//ENDE Service-Mode
 			//--------------------------- Normal Packet Mode ------------------------------------------------------------------------------------
 				else {
-					dccPacketEngine.serviceMode = 0;
+          dccPacketEngine.leaveServiceMode();
 					if (e_stop_queue.notEmpty() && (packet_counter % ONCE_REFRESH_INTERVAL)) {	//if there's an e_stop packet, send it now!
 						e_stop_queue.readPacket(&p); //nothing more to do. e_stop_queue is a repeat_queue, so automatically repeats where necessary.
 					}

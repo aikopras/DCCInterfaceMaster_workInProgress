@@ -16,12 +16,17 @@ class DccPacketEngine {
     volatile uint8_t data[MaxDccSize];            // The contents of the last dcc message received
     volatile uint8_t dataSize;                    // 3 .. 6, including XOR
     volatile uint8_t isWaiting;                   // Flag that next DCC message can be offered to the ISR
-    volatile uint8_t serviceMode;	                // Used in case the packet is a service mode packet
-                                                  // 0 = Normal packet
-                                                  // 255 = Service Mode packet
-                                                  // < 255 = Service Mode Repeat counter
-    volatile uint8_t serviceModeRepeat;	          // How often will Service Mode Packet be repeated?
-                                                  // The schedular may WRITE this number, using CV value from EEPROM
+
+    // Service Mode (SM): Methods to enter / leave
+    void enterServiceMode(void);                  // send Long preamble, resets and repeat SM packets
+    void leaveServiceMode(void);                  // Back to normal mode
+    bool isServiceModeEnabled(void);              // True while SM (long preamble / resets) is active
+
+    // Service Mode packet transmission and repeats
+    void setServiceModeMaxRepeats(uint8_t value); // Set maximum number of SM packet repeats
+    bool isFirstServiceModePacket(void);          // True only for the first packet of a new SM repeat sequence
+    bool isServiceModeRepeating(void);            // True while the ISR is repeating the current SM packet
+    void stopServiceModeRepeats(void);            // Abort SM retransmissions (e.g. after ACK)
 
     // RailCom specific
     void setRailCom(bool active);                 // Enable / disable generation of the RailCom gap
@@ -34,9 +39,6 @@ class DccPacketEngine {
     void setupWaveformGenerator();                // Setup and start the waveform generator (ISR)
 
     DccPacketEngine();                            // Constructor declaration
-
-  private:
-
 };
 
 extern DccPacketEngine dccPacketEngine;           // The dccPacketEngine must be accessible externally
