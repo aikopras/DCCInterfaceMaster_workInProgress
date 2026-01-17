@@ -5,17 +5,30 @@
 // void enable_additional_DCC_output(uint8_t pin); //extra DCC signal for S88/LocoNet without Shutdown and Railcom
 // void disable_additional_DCC_output(void);
 
+
+#if defined(__AVR_DA__) || defined(__AVR_DB__) || defined(__AVR_DD__) || defined(__AVR_EA__) || defined(__AVR_EB__)
 #include <DCCPacketScheduler_new.h>
+  #define monitor Serial1
+  #define PIN_MONITOR PIN_PA0         // These pins are also the default TCA0 pins
+  #define PIN_DCC     PIN_PA1
+  #define PIN_DCC_INV PIN_PA2
+  #define PIN_TEST1   PIN_PA3
+  #define PIN_TEST2   PIN_PA4
+  #define PIN_TEST3   PIN_PA5
+#else
+  #include <DCCPacketScheduler_new.h>
+  #define monitor Serial
+  #define PIN_MONITOR 5
+  #define PIN_DCC     6
+  #define PIN_DCC_INV 7
+  #define PIN_TEST1   8
+  #define PIN_TEST2   9
+  #define PIN_TEST3   10
+#endif
+
 #define SwitchFormat 0   //ROCO (+4) or IB (+0)
 
-#define monitor Serial1
 
-#define PIN_MONITOR PIN_PB0
-#define PIN_DCC     PIN_PB1
-#define PIN_DCC_INV PIN_PB2
-#define PIN_TEST1   PIN_PB3
-#define PIN_TEST2   PIN_PB4
-#define PIN_TEST3   PIN_PB5
 
 
 DCCPacketScheduler dps;
@@ -64,12 +77,12 @@ bool readSerialCommand(Stream &ser, long &outValue) {
         outValue = value;
         value = 0;
         inNumber = false;
-        return true;        // ✅ volledig commando ontvangen
+        return true;        // ✅ complete input received
       }
-      // anders: lege ENTER, negeren
+      // something else: ignore empty ENTER, 
     }
     else {
-      // ander teken → beëindig eventueel lopend getal
+      // none numeric. Drop everything
       if (inNumber) {
         outValue = value;
         value = 0;
@@ -78,7 +91,7 @@ bool readSerialCommand(Stream &ser, long &outValue) {
       }
     }
   }
-  return false;             // ❌ nog geen volledig commando
+  return false;             // ❌ incomplete input
 }
 
 
@@ -104,13 +117,20 @@ void sendLoco() {
   }
 };
 
+long lastTime;
 
 void loop() {
-  long value;
-  if (readSerialCommand(monitor, value)) {
+//  if ((millis() - lastTime) > 1000) {
+//    lastTime = millis();
+//    digitalWrite(PIN_TEST3, HIGH); digitalWrite(PIN_TEST3, LOW);
+//    if (dps.getpower() == OFF) dps.setpower(ON);
+//      else dps.setpower(OFF);
+//  }
+  long inputValue;
+  if (readSerialCommand(monitor, inputValue)) {
     monitor.print("Number received: ");
-    monitor.println(value);
-    switch(value) {
+    monitor.println(inputValue);
+    switch(inputValue) {
       case 1: dps.setpower(ON);                               // Signal on the rails
       return;
       case 2: dps.setpower(OFF);                              // No power on the rails
@@ -148,8 +168,10 @@ void loop() {
   }
 
 
-  //digitalWrite(PIN_TEST1,HIGH);digitalWrite(PIN_TEST1,LOW);
-  sendAccessory();
+ // digitalWrite(PIN_TEST1,HIGH);digitalWrite(PIN_TEST1,LOW);
+ // digitalWrite(PIN_TEST2,HIGH);digitalWrite(PIN_TEST2,LOW);
+ // digitalWrite(PIN_TEST3,HIGH);digitalWrite(PIN_TEST3,LOW);
+ sendAccessory();
   sendLoco();
   dps.update();
 }
