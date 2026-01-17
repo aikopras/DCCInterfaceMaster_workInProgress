@@ -1,9 +1,9 @@
 //******************************************************************************************************
 //
-// File:            DCCHardware_dxcore.inc
-// Purpose:         DCC Waveform Generator for DxCore processors (bit-banging)
+// File:            DCCHardware_common.inc
+// Purpose:         DCC Waveform Generator - Processor independent include file
 // Copyright 2026:  Aiko Pras
-// History:         2026-12-09 / Aiko Pras - First version
+// History:         2026-01-17 / Aiko Pras - First version
 //
 //
 // Historical credits:
@@ -22,64 +22,46 @@
 //     * Added support for service mode, RailCom cutouts and 3 DCC output pins
 //
 //
-// - The general approach follows the original software and still uses bit-banging
-// - Code has been split into separate drivers for different processors/hardware
-//   (mechanism: one .inc driver file per processor)
-// - Code has been cleaned up to improve readability; the external interface (.h)
-//   has been adapted into a C++ class structure
-// - Minor improvements to the state machine, such as timing around the RailCom start bit
-// - This version currently serves as a foundation for future developments
+// This file contains the processor-independent core of the DCC waveform generator.
+// It implements the logical DCC protocol flow as an interrupt-driven state machine,
+// but makes no assumptions about timers, registers, ports, interrupt vectors, or
+// the mechanism used to toggle the rail outputs. All hardware-specific aspects
+// (timer configuration, ISR binding, interrupt prologue, and physical pin control)
+// are supplied by the including driver file.
 //
-// This code variant implements the DCC signal generation fully in software,
-// where the three DCC-related pins are abstracted and toggled logically,
-// allowing virtually any physical pin to be selected.
-// The interrupt fires on every timer expiration and drives a state machine that represents the
-// DCC protocol flow. A key concept is the distinction between the first and second halfbit of a
-// DCC bit, which determines what actions are taken.
-// The ISR therefore uses two switch–case constructs: one for the first halfbit
-// and one for the second. During the first halfbit, the focus is mainly on configuring the next
-// timer interval (e.g. for ‘0’, ‘1’, or timing the Railcom gap). During the second halfbit, the
-// timer remains unchanged and the state machine is advanced to the next logical DCC state.
+// The state machine models the complete DCC bitstream, including preamble generation,
+// start, data and end bits, Service Mode behaviour and RailCom cutouts. The actual rail
+// signals may be generated either by software-controlled pin toggling (bit-banging)
+// or by hardware peripherals such as timer compare units.
 //
-// NOTE ON TIMING AND PIN TOGGLE LATENCY
-// ------------------------------------
-// This driver generates the DCC waveform fully in software using a TCB timer and bit-banging,
-// in order to allow maximum flexibility in the choice of output pins (normal, inverted and monitor
-// outputs can be mapped to any pin).
-// Because the DCC outputs are toggled via C++ inline functions using RAM-based structs,
-// pointer dereferencing and enable checks, each pin toggle requires multiple CPU instructions.
-// At 24 MHz this results in approximately 20 CPU cycles (~875 ns) between toggling the inverted
-// and normal rail outputs.
+// A fundamental design choice is the explicit distinction between the first and second
+// halfbit of every DCC bit. During the first halfbit, output transitions are triggered
+// (or delegated to hardware) and the timing for the next halfbit is configured. During
+// the second halfbit, the timing remains unchanged and only the logical DCC state
+// machine is advanced. This separation allows accurate bit timing, safe control of
+// complementary rail outputs, and a clean split between physical signal generation
+// and protocol flow.
 //
-// This delay is relatively large compared to the ideal DCC zero-crossing and deforms the DCC waveform.
+// Service Mode packet retransmissions are handled inside the ISR rather than in the
+// scheduler. This ensures that repeats are tightly coupled to the actual transmission
+// flow and allows higher software layers to detect acknowledgements reliably, without
+// being affected by scheduler timing, buffering, or packet queue latency.
 //
-// Possible optimizations to reduce this delay include:
-//  - Using direct port access with hard-coded ports and bit masks
-//  - Removing runtime enable checks
-//  - Toggling both rail pins simultaneously when located on the same port
-//  - Using hardware-based toggling (TCA / EVSYS / CCL)
-//
-// A separate TCA-based driver is provided which uses hardware pin toggling
-// and produces an ideal, simultaneous zero-crossing, but at the cost of
-// reduced flexibility in pin selection.
+// A detailed description of the state machine, its states, and their transitions can
+// be found in: extras/Statemachine.
 //
 //******************************************************************************************************
-#include <Arduino.h>
-#include "../DCCHardware.h"
-
-
+//******************************************************************************************************
+// 1. Defines
+//******************************************************************************************************
 #define PREAMBLE_LENGTH 17        	// see RCN-211 (Ausgabe 23.07.2023)
 #define PREAMBLE_LENGTH_SM 20       // see RCN-216 (Ausgabe 24.11.2025)
 #define RAILCOM_CUTOUT_LENGTH 4	  	// see RCN-217 (Ausgabe 24.11.2025)
 
 
 //******************************************************************************************************
-// 1. Declaration and initialisation (constructor) of external object
+// 2. Declaration and initialisation (constructor) of external object
 //******************************************************************************************************
-// dccPacketEngine is the object that controls packet transmission for different hardware
-DccPacketEngine dccPacketEngine;
-
-
 // Constructor definition
 DccPacketEngine::DccPacketEngine(){
   dccRailPin = 6;                                 // Pin for DCC rail Signal, with RailCom support
@@ -91,9 +73,12 @@ DccPacketEngine::DccPacketEngine(){
   for(int i=0; i<MaxDccSize; i++) {data[i] = 0;}
 }
 
+// dccPacketEngine is the object that controls packet transmission for different hardware
+DccPacketEngine dccPacketEngine;
+
 
 //******************************************************************************************************
-// 2. Declaration and initialisation of internal stuff
+// 3. Declaration and initialisation of internal data structures
 //******************************************************************************************************
 // Enumerated type describing the ISR state machine for DCC signal generation.
 // Each state spans one or more DCC bits (2 × 58 µs for a '1', or 2 × 100 µs for a '0').
@@ -136,116 +121,103 @@ struct DCC_ISR_State {
 static DCC_ISR_State dccISR;                              // Create an instance of the struct for the ISR
 
 
-//******************************************************************************************************
-// Hardware specific functions
-//******************************************************************************************************
-// Direct register access for pin changes
-// Create a structure for each output pin. This structure provides direct access
-// to the DxCore output registers, using a bitmask. Create three variables for all three pins.
-typedef struct {
-  volatile uint8_t *outset;   // Pointer naar PORTx.OUTSET register
-  volatile uint8_t *outclr;   // Pointer naar PORTx.OUTCLR register
-  volatile uint8_t *outtgl;   // Pointer naar PORTx.OUTTGL register
-  uint8_t bit;                // Bitmask voor de pin
-  uint8_t enable;             // Flag to decide if a pin toggle is allowed
-} DccOut_t;
-
-static DccOut_t dccMonitor;   // Create an instance of the register struct for the dccMonitor
-static DccOut_t dccRail;      // Create an instance of the register struct for the dccRail
-static DccOut_t dccRailInv;   // Create an instance of the register struct for the dccRailInv
-
-// We perform a check if the output is enabled, to allow similar software sructures for
-// approaches where the pin output is toggled by software or by hardware
-inline void dccMonLow()        { if (dccMonitor.enable)  *dccMonitor.outclr = dccMonitor.bit; }
-inline void dccMonHigh()       { if (dccMonitor.enable)  *dccMonitor.outset = dccMonitor.bit; }
-inline void dccMonTgl()        { if (dccMonitor.enable)  *dccMonitor.outtgl = dccMonitor.bit; }
-inline void dccOutLow()        { if (dccRail.enable)     *dccRail.outclr = dccRail.bit; }
-inline void dccOutHigh()       { if (dccRail.enable)     *dccRail.outset = dccRail.bit; }
-inline void dccOutTgl()        { if (dccRail.enable)     *dccRail.outtgl = dccRail.bit; }
-inline void dccOutInvLow()     { if (dccRailInv.enable)  *dccRailInv.outclr = dccRailInv.bit; }
-inline void dccOutInvHigh()    { if (dccRailInv.enable)  *dccRailInv.outset = dccRailInv.bit; }
-inline void dccOutInvTgl()     { if (dccRailInv.enable)  *dccRailInv.outtgl = dccRailInv.bit; }
-
-// TCB clock = CLK_PER = F_CPU (typically 24 MHz)
-// 1 tick = 1 / F_CPU seconds */
-// The timer counts are calculated from the selected clockspeed, and are therefore dynamic
-#define TICKS_PER_US               (F_CPU / 1000000UL)
-#define half_one_count             (TICKS_PER_US * (29))
-#define one_count                  (TICKS_PER_US * (58))
-#define zero_count                 (TICKS_PER_US * (116))
-
-// We use TCB1 in periodic interrupt mode and reload CCMP each time
-// Switching to other TCBs should be trivial
-#define TMR_RAILCOM_STARTBIT()     { TCB1.CCMP = half_one_count; }
-#define TMR_ONE()                  { TCB1.CCMP = one_count; }
-#define TMR_ZERO()                 { TCB1.CCMP = zero_count; }
-#define DCC_TIMER_INTERRUPT        TCB1_INT_vect
-
-
-#define DEBUG1 digitalWrite(PIN_PB3, HIGH); digitalWrite(PIN_PB3, LOW);
-#define DEBUG2 digitalWrite(PIN_PB4, HIGH); digitalWrite(PIN_PB4, LOW);
-#define DEBUG3 digitalWrite(PIN_PB5, HIGH); digitalWrite(PIN_PB5, LOW);
-
-
 //******************************************************************************
-// setup_DCC_waveform_generator
+// 4. Service Mode interface methods
 //******************************************************************************
-// Initialise a DCC output pin for direct register access (DxCore)
-// - pinObj: the DccOut_t object that stores the registers and bit mask
-// - arduinoPin: any Arduino pin number, 0xFF if the pin is not set
-inline void initDccPin(DccOut_t &pinObj, uint8_t arduinoPin) {
-  if (arduinoPin != 0xFF) {
-    pinMode(arduinoPin, OUTPUT);                  // Port is output
-    uint8_t port = digitalPinToPort(arduinoPin);  // Mapping from pin to port
-    volatile PORT_t *p = portToPortStruct(port);  // Local pointer to the port
-    pinObj.outset = &p->OUTSET;                   // Register to set output
-    pinObj.outclr = &p->OUTCLR;                   // Register to clear output
-    pinObj.outtgl = &p->OUTTGL;                   // Register to toggle output
-    pinObj.bit = digitalPinToBitMask(arduinoPin); // pin bitmask
-    pinObj.enable = false;                        // Toggle pin not allowed
-  }
-  else {
-    pinObj.outset = nullptr;
-    pinObj.outclr = nullptr;
-    pinObj.outtgl = nullptr;
-    pinObj.bit = 0;
-    pinObj.enable = false;
-  }
+void DccPacketEngine::enterServiceMode(void) {
+  // Enable Service Mode behaviour (long preamble, reset packets, SM flow).
+  dccISR.smEnabled = true;
+}
+
+void DccPacketEngine::leaveServiceMode(void) {
+  // Leave Service Mode immediately. Ongoing SM retransmissions are cancelled.
+  dccISR.smEnabled = false;
+  dccISR.smRepeatsRemaining = 0;
+}
+
+bool DccPacketEngine::isServiceModeEnabled(void) {
+  // Returns true if the system is currently in Service Mode.
+  return dccISR.smEnabled;
+}
+
+void DccPacketEngine::setServiceModeMaxRepeats(uint8_t value) {
+  dccISR.smMaxRepeats = value;
+  // TODO: ALLEEN VOOR TESTEN
+  dccISR.smMaxRepeats = 15;
+}
+
+bool DccPacketEngine::isFirstServiceModePacket(void) {
+  // True only for the first transmission of a new SM packet.
+  return dccISR.smEnabled && (dccISR.smRepeatsRemaining == dccISR.smMaxRepeats);
+}
+
+bool DccPacketEngine::isServiceModeRepeating(void) {
+  // True while the ISR is busy retransmitting the current SM packet.
+  return dccISR.smEnabled && (dccISR.smRepeatsRemaining > 0);
+}
+
+void DccPacketEngine::stopServiceModeRepeats(void) {
+  // Stop retransmission of the current SM packet (e.g. after ACK).
+  dccISR.smRepeatsRemaining = 0;
 }
 
 
-void DccPacketEngine::setupWaveformGenerator() {
-  // We must stop the timer, since it is using the same registers as we may
-  // subsequently modify. If we don't stop the timer first, the code may crash.
-  TCB1.CTRLA = 0;                       // stop + reset control A
-  // Initialise the structure with registers and mask for the three pins
-  // If a pin is not used (0xFF), the pointers to the registers will be cleared
-  initDccPin(dccRail, dccRailPin);
-  initDccPin(dccRailInv, dccRailInvPin);
-  initDccPin(dccMonitor, dccMonitorPin);
-  // DCC_USES_TCB1 - DxCore
-  TCB1.CTRLB = TCB_CNTMODE_INT_gc;      // periodic interrupt mode
-  TCB1.CCMP  = one_count;               // start with "1" timing
-  TCB1.INTFLAGS = TCB_CAPT_bm;          // clear pending interrupt flag
-  TCB1.INTCTRL  = TCB_CAPT_bm;          // enable capture/timeout interrupt
-  TCB1.CTRLA = TCB_CLKSEL_CLKDIV1_gc | TCB_ENABLE_bm;   // CLK_PER, enable
-  // Enable the three output channels
-  dccRail.enable = true;
-  dccRailInv.enable = true;
-  dccMonitor.enable = true;
-  // Set the three pins to their start value
+//******************************************************************************
+// 5. RailCom interface methods
+//******************************************************************************
+void DccPacketEngine::setRailCom(bool active) { // Enable / disable generation of the RailCom gap
+  dccISR.railCom = active;
+}
+
+bool DccPacketEngine::getRailCom(void) { // Is generation of the RailCom gap enabled?
+  return dccISR.railCom;
+}
+
+// This routine allows higher-layer software to determine whether a RailCom gap
+// is currently in progress, so that rail voltage and/or current measurements
+// can be safely controlled.
+// To avoid measurement errors, such measurements must not be performed during
+// a RailCom gap. Therefore, a conservative signaling approach is used.
+// The start of the gap is indicated immediately when the RailCom start bit begins,
+// while the end of the gap is indicated slightly after the actual gap.
+// This is implemented using the boolean flag 'railComGapFlag', which is set
+// at the start of the RailCom start bit and cleared at the first bit of the
+// subsequent preamble.
+bool DccPacketEngine::railComGap(void) {
+  return dccISR.railComGapFlag;
+}
+
+
+//******************************************************************************
+// 6. Start / Stop interface methods
+//******************************************************************************
+void DccPacketEngine::StopOutputSignal() {
+  // This routine may be called when a short circuit is detected or when the user
+  // presses the emergency stop button. In that case the normal and inverted DCC
+  // outputs must stop toggling and be forced LOW, so no DCC power is present on
+  // the rails. The monitor output is not disabled, allowing switches and other
+  // accessories to remain operational.
+  noInterrupts();
   dccOutLow();
-  dccOutInvHigh();
-  dccMonLow();
-  //dccOutInvTgl();                       // Inverted DCC signal
+  dccOutInvLow();
+  dccRail.enable = false;
+  dccRailInv.enable = false;
+	dccISR.railPower = false;
+  interrupts();
+}
 
-  // Start with a DCC low-signal
-  TMR_ZERO();
+void DccPacketEngine::RunOutputSignal() {
+  // Enabling power is delicate, because we must ensure that the normal and
+  // inverted DCC signals always remain complementary and are never high at the
+  // same time. For this reason, toggling is enabled at the packet end bit:
+  // during the first half-bit the inverted signal is allowed to toggle again,
+  // and during the second half-bit the normal signal is re-enabled.
+	dccISR.railPower = true;
 }
 
 
 //******************************************************************************
-// Internal support routines
+// 7. Inline ISR support routines
 //******************************************************************************
 static inline void startServiceModeRepeats() {
   // Called once when a new SM packet is accepted.
@@ -269,17 +241,17 @@ static inline bool isServiceModeAckPacket(volatile uint8_t *packet) {
 //******************************************************************************
 //**********************************  ISR   ************************************
 //******************************************************************************
-// This is the Interrupt Service Routine (ISR) for Timer compare match.
-ISR(DCC_TIMER_INTERRUPT) {
-  uint8_t mask;                  // helper to determine which pin to toggle
-  TCB1.INTFLAGS = TCB_CAPT_bm;   // Clear the interrupt flag
-  //
-  // The ISR is entered everytime the timer expires.
-  // Thus every 100us (0-bit), 58us (1-bit or 29us (RailCom start bit)
+// This is the Interrupt Service Routine (ISR).
+// The ISR is entered everytime the timer expires.
+// Thus every 100us (0-bit), 58us (1-bit or 29us (RailCom start bit)
+
+ISR_START {
+  ISR_PROLOGUE;                  // Processor specific code may be here
   //
   // ===========================================================================
   // PART 1: FIRST HALFBIT: TOGGLE PINS AND CHANGE TIMERS (IF NEEDED)
   // ===========================================================================
+  uint8_t mask;                       // helper to determine which pin to toggle
   if (dccISR.firstHalfBit) {
     // The H-bridge must never have both sides active at the same time, as this
     // would result in a short circuit and destroy the H-bridge.
@@ -489,98 +461,3 @@ ISR(DCC_TIMER_INTERRUPT) {
   dccISR.firstHalfBit = !dccISR.firstHalfBit;
 
 }; // End ISR
-
-
-//******************************************************************************
-// Service Mode interface methods
-//******************************************************************************
-void DccPacketEngine::enterServiceMode(void) {
-  // Enable Service Mode behaviour (long preamble, reset packets, SM flow).
-  dccISR.smEnabled = true;
-}
-
-void DccPacketEngine::leaveServiceMode(void) {
-  // Leave Service Mode immediately. Ongoing SM retransmissions are cancelled.
-  dccISR.smEnabled = false;
-  dccISR.smRepeatsRemaining = 0;
-}
-
-bool DccPacketEngine::isServiceModeEnabled(void) {
-  // Returns true if the system is currently in Service Mode.
-  return dccISR.smEnabled;
-}
-
-void DccPacketEngine::setServiceModeMaxRepeats(uint8_t value) {
-  dccISR.smMaxRepeats = value;
-  // TODO: ALLEEN VOOR TESTEN
-  dccISR.smMaxRepeats = 15;
-}
-
-bool DccPacketEngine::isFirstServiceModePacket(void) {
-  // True only for the first transmission of a new SM packet.
-  return dccISR.smEnabled && (dccISR.smRepeatsRemaining == dccISR.smMaxRepeats);
-}
-
-bool DccPacketEngine::isServiceModeRepeating(void) {
-  // True while the ISR is busy retransmitting the current SM packet.
-  return dccISR.smEnabled && (dccISR.smRepeatsRemaining > 0);
-}
-
-void DccPacketEngine::stopServiceModeRepeats(void) {
-  // Stop retransmission of the current SM packet (e.g. after ACK).
-  dccISR.smRepeatsRemaining = 0;
-}
-
-
-//******************************************************************************
-// RailCom interface methods
-//******************************************************************************
-void DccPacketEngine::setRailCom(bool active) { // Enable / disable generation of the RailCom gap
-  dccISR.railCom = active;
-}
-
-bool DccPacketEngine::getRailCom(void) { // Is generation of the RailCom gap enabled?
-  return dccISR.railCom;
-}
-
-// This routine allows higher-layer software to determine whether a RailCom gap
-// is currently in progress, so that rail voltage and/or current measurements
-// can be safely controlled.
-// To avoid measurement errors, such measurements must not be performed during
-// a RailCom gap. Therefore, a conservative signaling approach is used.
-// The start of the gap is indicated immediately when the RailCom start bit begins,
-// while the end of the gap is indicated slightly after the actual gap.
-// This is implemented using the boolean flag 'railComGapFlag', which is set
-// at the start of the RailCom start bit and cleared at the first bit of the
-// subsequent preamble.
-bool DccPacketEngine::railComGap(void) {
-  return dccISR.railComGapFlag;
-}
-
-
-//******************************************************************************
-// Start / Stop
-//******************************************************************************
-void DccPacketEngine::StopOutputSignal() {
-  // This routine may be called when a short circuit is detected or when the user
-  // presses the emergency stop button. In that case the normal and inverted DCC
-  // outputs must stop toggling and be forced LOW, so no DCC power is present on
-  // the rails. The monitor output is not disabled, allowing switches and other
-  // accessories to remain operational.
-  noInterrupts();
-  dccOutLow();
-  dccOutInvLow();
-  dccRail.enable = false;
-  dccRailInv.enable = false;
-	dccISR.railPower = false;
-  interrupts();
-}
-
-void DccPacketEngine::RunOutputSignal() {
-  // Enabling power is delicate, because we must ensure that the normal and
-  // inverted DCC signals always remain complementary and are never high at the
-  // same time. For this reason, toggling is enabled at the packet end bit:
-  // during the first half-bit the inverted signal is allowed to toggle again,
-  // and during the second half-bit the normal signal is re-enabled.
-	dccISR.railPower = true;
-}
