@@ -198,10 +198,10 @@ void DccPacketEngine::StopOutputSignal() {
   // the rails. The monitor output is not disabled, allowing switches and other
   // accessories to remain operational.
   noInterrupts();
-  dccOutLow();
-  dccOutInvLow();
-  dccRail.enable = false;
-  dccRailInv.enable = false;
+  DCC_OUT_LOW;
+  DCC_OUT_INV_LOW;
+  DISABLE_DCCOUT;
+  DISABLE_DCCINV;
 	dccISR.railPower = false;
   interrupts();
 }
@@ -246,31 +246,31 @@ static inline bool isServiceModeAckPacket(volatile uint8_t *packet) {
 // Thus every 100us (0-bit), 58us (1-bit or 29us (RailCom start bit)
 
 ISR_START {
+  digitalWriteFast(PIN_PD3,HIGH);
+
   ISR_PROLOGUE;                  // Processor specific code may be here
+  uint8_t mask;                  // helper to determine which bit we are
   //
   // ===========================================================================
   // PART 1: FIRST HALFBIT: TOGGLE PINS AND CHANGE TIMERS (IF NEEDED)
   // ===========================================================================
-  uint8_t mask;                       // helper to determine which pin to toggle
   if (dccISR.firstHalfBit) {
-    // The H-bridge must never have both sides active at the same time, as this
-    // would result in a short circuit and destroy the H-bridge.
-    // Therefore, the normal and inverted rail pins must never be high
-    // simultaneously. At the start of the first half-bit, the normal rail pin
-    // is low while the inverted rail pin is high. For this reason, during the
-    // first half-bit, the inverted rail pin must be toggled first, followed
-    // by the normal rail pin.
-    dccOutInvTgl();                // Inverted DCC signal
-    dccOutTgl();                   // Normal DCC signal
-    dccMonTgl();                   // Monitor signal
+    // At the start of the first half-bit, the normal rail output is low while
+    // the inverted rail output is high. When pin transitions are generated
+    // in software, the required state change is performed explicitly here
+    // by toggling the outputs.
+    // In the hardware-assisted approach (toggle-on-compare-match),
+    // dccFirtsHalfBitToggle() is implemented as an empty inline function,
+    // as the required transition is handled automatically by the timer.
+    dccFirtsHalfBitToggle();
 
     switch (dccISR.state) {
 
       case dccRailComStartBit:
         if (dccISR.firstHalfBitRC) {        // Is this the first part of the RailCom halfbit?
           TMR_RAILCOM_STARTBIT();           // Set the timer, to trigger after 29us
-          dccRailInv.enable = false;        // The Inverse pin will not toggle during the RC gap
-          dccMonitor.enable = false;        // The Monitor pin will skip the toggle after 29us
+          DISABLE_DCCINV;                   // The Inverse pin will not toggle during the RC gap
+          DISABLE_DCCMON;                   // The Monitor pin will skip the toggle after 29us
           dccISR.railComGapFlag = true;     // The RailCom gap just started
           // Next ISR (in 29us from now) we must handle the second part of the RailCom start bit.
           dccISR.firstHalfBitRC = false;
@@ -282,8 +282,8 @@ ISR_START {
           dccISR.firstHalfBit = !dccISR.firstHalfBit;
         }
         else {                              // First halfbit, but second part of the RC startbit
-          dccRail.enable = false;           // The normal pin will not toggle during the RC gap
-          dccMonitor.enable = true;         // The Monitor pin will continue to toggle at ISRs
+          DISABLE_DCCOUT;                   // The normal pin will not toggle during the RC gap
+          ENABLE_DCCMON;                    // The Monitor pin will continue to toggle at ISRs
           dccISR.firstHalfBitRC = true;     // Next time back to the first part of the RC startbit
         }
       break;
@@ -294,7 +294,7 @@ ISR_START {
 
       case dccPreambleStartBit:
         if (dccISR.railPower)               // Only if their there should be power on the rails
-          dccRailInv.enable = true;         // We restart the inverted signal
+          ENABLE_DCCINV;                    // We restart the inverted signal
         dccISR.railComGapFlag = false;      // Only now we are certain that the gap is over
       break;
 
@@ -375,16 +375,14 @@ ISR_START {
   // PART 2: SECOND HALFBIT: UPDATE THE STATE MACHINE
   // ===========================================================================
   else {
-    // The H-bridge must never have both sides active at the same time, as this
-    // would result in a short circuit and destroy the H-bridge.
-    // Therefore, the normal and inverted rail pins must never be high
-    // simultaneously. At the start of the second half-bit, the normal rail pin
-    // is high while the inverted rail pin is low. For this reason, during the
-    // first half-bit, the normal rail pin must be toggled first, followed
-    // by the inverted rail pin.
-    dccOutTgl();                   // Normal DCC signal
-    dccOutInvTgl();                // Inverted DCC signal
-    dccMonTgl();                   // Monitor signal
+    // At the start of the first half-bit, the normal rail output is high while
+    // the inverted rail output is low. When pin transitions are generated
+    // in software, the required state change is performed explicitly here
+    // by toggling the outputs.
+    // In the hardware-assisted approach (toggle-on-compare-match),
+    // dccFirtsHalfBitToggle() is implemented as an empty inline function,
+    // as the required transition is handled automatically by the timer.
+    dccSecondHalfBitToggle();
 
     switch (dccISR.state) {
 
@@ -398,7 +396,7 @@ ISR_START {
         dccISR.bitsRemaining--;
         if (dccISR.bitsRemaining == 0) {      // Last half of last RailCom Gap bit
           if (dccISR.railPower)               // Only if the rails may be powered
-            dccRail.enable = true;            // The normal pin is allowed to toggle again
+            ENABLE_DCCOUT;                    // The normal pin is allowed to toggle again
           dccISR.bitsRemaining = PREAMBLE_LENGTH - RAILCOM_CUTOUT_LENGTH;
           dccISR.state = dccPreambleStartBit;
         }
@@ -443,7 +441,7 @@ ISR_START {
           }
           else {
             if (dccISR.railPower)                   // Only if the rails may be powered
-              dccRail.enable = true;                // The normal pin is allowed to toggle again
+              ENABLE_DCCOUT;                        // The normal pin is allowed to toggle again
             dccISR.state = dccPreambleStartBit;
             dccISR.bitsRemaining = PREAMBLE_LENGTH; // Normal preamble (RCN 211)
             }
@@ -459,5 +457,7 @@ ISR_START {
 
   // Next ISR we will take the other halfbit
   dccISR.firstHalfBit = !dccISR.firstHalfBit;
+
+  digitalWriteFast(PIN_PD3,LOW);
 
 }; // End ISR

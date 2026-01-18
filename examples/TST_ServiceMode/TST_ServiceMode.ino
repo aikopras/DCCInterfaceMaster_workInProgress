@@ -1,12 +1,12 @@
 #if defined(__AVR_DA__) || defined(__AVR_DB__) || defined(__AVR_DD__) || defined(__AVR_EA__) || defined(__AVR_EB__)
 #include <DCCPacketScheduler_new.h>
   #define monitor Serial1
-  #define PIN_MONITOR PIN_PB0
-  #define PIN_DCC     PIN_PB1
-  #define PIN_DCC_INV PIN_PB2
-  #define PIN_TEST1   PIN_PB3
-  #define PIN_TEST2   PIN_PB4
-  #define PIN_TEST3   PIN_PB5
+  #define PIN_MONITOR PIN_PD0         // These pins can be used with TCA0
+  #define PIN_DCC     PIN_PD1
+  #define PIN_DCC_INV PIN_PD2
+  #define PIN_TEST1   PIN_PD3
+  #define PIN_TEST2   PIN_PD4
+  #define PIN_TEST3   PIN_PD5
 #else
   #include <DCCPacketScheduler_new.h>
   #define monitor Serial
