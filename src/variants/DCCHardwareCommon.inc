@@ -103,7 +103,7 @@ typedef enum  {
 
 // Define the structure for all variables used by the ISR
 struct DCC_ISR_State {
-  volatile DCC_output_state_t state = dccPreamble;         // Initial state of the ISR state machine
+  volatile DCC_output_state_t state = dccPreambleStartBit; // Initial state of the ISR state machine
   volatile uint8_t bitsRemaining = PREAMBLE_LENGTH;        // Bits remaining in current phase (preamble or data byte)
   volatile uint8_t bytesRemainingInPacket = 0;             // How many bytes left to send
   volatile uint8_t currentPacket[6] = {0, 0, 0, 0, 0, 0};  // Current packet being sent
@@ -246,7 +246,7 @@ static inline bool isServiceModeAckPacket(volatile uint8_t *packet) {
 // Thus every 100us (0-bit), 58us (1-bit or 29us (RailCom start bit)
 
 ISR_START {
-  digitalWriteFast(PIN_PD3,HIGH);
+  digitalWrite(9,HIGH);
 
   ISR_PROLOGUE;                  // Processor specific code may be here
   uint8_t mask;                  // helper to determine which bit we are
@@ -260,9 +260,9 @@ ISR_START {
     // in software, the required state change is performed explicitly here
     // by toggling the outputs.
     // In the hardware-assisted approach (toggle-on-compare-match),
-    // dccFirtsHalfBitToggle() is implemented as an empty inline function,
+    // dccFirstHalfBitToggle() is implemented as an empty inline function,
     // as the required transition is handled automatically by the timer.
-    dccFirtsHalfBitToggle();
+    dccFirstHalfBitToggle();
 
     switch (dccISR.state) {
 
@@ -380,7 +380,7 @@ ISR_START {
     // in software, the required state change is performed explicitly here
     // by toggling the outputs.
     // In the hardware-assisted approach (toggle-on-compare-match),
-    // dccFirtsHalfBitToggle() is implemented as an empty inline function,
+    // dccFirstHalfBitToggle() is implemented as an empty inline function,
     // as the required transition is handled automatically by the timer.
     dccSecondHalfBitToggle();
 
@@ -458,6 +458,6 @@ ISR_START {
   // Next ISR we will take the other halfbit
   dccISR.firstHalfBit = !dccISR.firstHalfBit;
 
-  digitalWriteFast(PIN_PD3,LOW);
+  digitalWrite(9,LOW);
 
 }; // End ISR

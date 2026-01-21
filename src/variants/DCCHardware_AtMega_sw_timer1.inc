@@ -1,9 +1,9 @@
 //******************************************************************************************************
 //
-// File:            DCCHardware_dxcore_sw_tcb1.inc
-// Purpose:         DCC Waveform Generator for DxCore processors (bit-banging)
+// File:            DCCHardware_atmega_sw_timer1.inc
+// Purpose:         DCC Waveform Generator for traditional ATMega  processors (bit-banging)
 // Copyright 2026:  Aiko Pras
-// History:         2026-01-17 / Aiko Pras - First version
+// History:         2026-01-21 / Aiko Pras - First version
 //
 //
 // Historical credits:
@@ -22,18 +22,18 @@
 //     * Added support for service mode, RailCom cutouts and 3 DCC output pins
 //
 // Hardware layer overview:
-// This file implements a DxCore-specific hardware layer connecting the processor-independent
-// DCC state machine (DCCHardwareCommon.inc) to the AVR Dx hardware. It provides:
-//   - Configuration of a TCB timer for periodic half-bit interrupts
-//   - Binding of the generic ISR to the correct interrupt vector
-//   - Inline functions and macros for timing and pin control
-//   - Initialization and enabling of the rail and monitor outputs
+// Implements the hardware layer for ATMega processors (e.g., 328, 2560).
+// Connects the processor-independent DCC state machine (DCCHardwareCommon.inc)
+// to the ATMega hardware. It provides:
+//   - Timer1 configuration for precise DCC bit-timing interrupts
+//   - Binding the ISR to the correct Timer1 vector
+//   - Inline functions/macros for timing and pin control
+//   - Initialization and enabling of rail and monitor outputs
 //
 // Pin control and toggling:
-// The driver uses software-controlled toggles (bit-banging) via direct register access.
-// The normal rail, inverted rail, and monitor outputs are each represented by a small
-// structure containing the port registers and bitmask. Output transitions are triggered
-// explicitly in the ISR for deterministic timing.
+// Toggles are performed in the ISR using direct port access (software-controlled).
+// Each output (normal rail, inverted rail, monitor) is represented by a small structure
+// holding the port register pointer and pin bitmask. This ensures deterministic timing.
 //
 // Toggling strategy and H-bridge safety:
 // - All rail transitions use toggles rather than set/clear to maintain consistent
@@ -51,11 +51,9 @@
 
 // Direct register access for pin changes
 // Create a structure for each output pin. This structure provides direct access
-// to the DxCore output registers, using a bitmask.
+// to the AtMega output registers, using a bitmask.
 typedef struct {
-  volatile uint8_t *outset;   // Pointer naar PORTx.OUTSET register
-  volatile uint8_t *outclr;   // Pointer naar PORTx.OUTCLR register
-  volatile uint8_t *outtgl;   // Pointer naar PORTx.OUTTGL register
+  volatile uint8_t *port;     // Pointer naar PORTx register
   uint8_t bit;                // Bitmask voor de pin
   uint8_t enable;             // Flag to decide if a pin toggle is allowed
 } DccOut_t;
@@ -66,18 +64,17 @@ static DccOut_t dccRail;      // Create an instance for the dccRail
 static DccOut_t dccRailInv;   // Create an instance for the dccRailInv
 
 
-// TCB specific #defines to set, clear and toggle the output pins
+// ATMega specific #defines to set, clear and toggle the output pins
 // Although only some will be used, for completeness all options are given.
-#define DCC_OUT_HGH          {*dccRail.outset = dccRail.bit;}
-#define DCC_OUT_LOW          {*dccRail.outclr = dccRail.bit;}
-#define DCC_OUT_TGL          {*dccRail.outtgl = dccRail.bit;}
-#define DCC_OUT_INV_HGH      {*dccRailInv.outset = dccRailInv.bit;}
-#define DCC_OUT_INV_LOW      {*dccRailInv.outclr = dccRailInv.bit;}
-#define DCC_OUT_INV_TGL      {*dccRailInv.outtgl = dccRailInv.bit;}
-#define DCC_OUT_MON_HGH      {*dccMonitor.outset = dccMonitor.bit;}
-#define DCC_OUT_MON_LOW      {*dccMonitor.outclr = dccMonitor.bit;}
-#define DCC_OUT_MON_TGL      {*dccMonitor.outtgl = dccMonitor.bit;}
-
+#define DCC_OUT_HGH          { *dccRail.port |=  dccRail.bit; }
+#define DCC_OUT_LOW          { *dccRail.port &= ~dccRail.bit; }
+#define DCC_OUT_TGL          { *dccRail.port ^=  dccRail.bit; }
+#define DCC_OUT_INV_HGH      { *dccRailInv.port |=  dccRailInv.bit; }
+#define DCC_OUT_INV_LOW      { *dccRailInv.port &= ~dccRailInv.bit; }
+#define DCC_OUT_INV_TGL      { *dccRailInv.port ^=  dccRailInv.bit; }
+#define DCC_OUT_MON_HGH      { *dccMonitor.port |=  dccMonitor.bit; }
+#define DCC_OUT_MON_LOW      { *dccMonitor.port &= ~dccMonitor.bit; }
+#define DCC_OUT_MON_TGL      { *dccMonitor.port ^=  dccMonitor.bit; }
 
 //******************************************************************************
 // First half-bit toggle
@@ -126,7 +123,7 @@ inline void dccSecondHalfBitToggle(void) {
 }
 
 //******************************************************************************
-// Timer and TCB macros for DCC waveform generation
+// Timer macros for DCC waveform generation
 //
 // TICKS_PER_US       : Number of timer ticks per microsecond, based on F_CPU
 // half_one_count     : Timer count for a half "1" bit (29 µs typical)
@@ -139,8 +136,8 @@ inline void dccSecondHalfBitToggle(void) {
 //   - TMR_ZERO()            : Load timer for "0" bit duration
 //
 // ISR macros:
-//   - ISR_START    : Bind the ISR to TCB1 interrupt vector
-//   - ISR_PROLOGUE : Clear the interrupt flag at the start of ISR
+//   - ISR_START    : Bind the ISR to the Timer1 interrupt vector
+//   - ISR_PROLOGUE : Clear the interrupt flag at the start of ISR (not needed)
 //
 // Pin enable/disable macros:
 //   - ENABLE_DCCOUT / DISABLE_DCCOUT  : Enable or disable normal rail output
@@ -151,19 +148,19 @@ inline void dccSecondHalfBitToggle(void) {
 // naming for timer counts and pin control across the driver.
 //******************************************************************************
 #define TICKS_PER_US               (F_CPU / 1000000UL)
-#define half_one_count             (TICKS_PER_US * (29))     // RCN 217
-#define one_count                  (TICKS_PER_US * (58))     // RCN 210
-#define zero_count                 (TICKS_PER_US * (100))    // RCN 210
+#define half_one_count             ((uint16_t)TICKS_PER_US * (29))   // RCN 217
+#define one_count                  ((uint16_t)TICKS_PER_US * (58))   // RCN 210
+#define zero_count                 ((uint16_t)TICKS_PER_US * (100))  // RCN 210
 
-// We use TCB1 in periodic interrupt mode and reload CCMP each time
-// Switching to other TCBs should be trivial
-#define TMR_RAILCOM_STARTBIT()     { TCB1.CCMP = half_one_count; }
-#define TMR_ONE()                  { TCB1.CCMP = one_count; }
-#define TMR_ZERO()                 { TCB1.CCMP = zero_count; }
+// We use TIMER1 in CTC mode mode and reload OCR1A each time
+// Switching to other Timer2 should be doable
+#define TMR_RAILCOM_STARTBIT()     { OCR1A = half_one_count; }
+#define TMR_ONE()                  { OCR1A = one_count; }
+#define TMR_ZERO()                 { OCR1A = zero_count; }
 
 // We have to set the right ISR call and vector, and  clear the interrupt flag
-#define ISR_START                  ISR(TCB1_INT_vect)
-#define ISR_PROLOGUE               {TCB1.INTFLAGS = TCB_CAPT_bm; }
+#define ISR_START                  ISR(TIMER1_COMPA_vect)
+#define ISR_PROLOGUE               {; }   // No need to clear the interrupt flag
 
 // Enable / Disable the various channels
 #define ENABLE_DCCMON              {dccMonitor.enable = true;}
@@ -173,15 +170,19 @@ inline void dccSecondHalfBitToggle(void) {
 #define ENABLE_DCCINV              {dccRailInv.enable = true;}
 #define DISABLE_DCCINV             {dccRailInv.enable = false;}
 
+// TODO: FOR TESTING
+#define PIN_TEST1   8
+#define PIN_TEST2   9
+#define PIN_TEST3   10
 
-#define DEBUG1 digitalWrite(PIN_PB3, HIGH); digitalWrite(PIN_PB3, LOW);
-#define DEBUG2 digitalWrite(PIN_PB4, HIGH); digitalWrite(PIN_PB4, LOW);
-#define DEBUG3 digitalWrite(PIN_PB5, HIGH); digitalWrite(PIN_PB5, LOW);
+#define DEBUG1 digitalWrite(PIN_TEST1, HIGH); digitalWrite(PIN_TEST1, LOW);
+#define DEBUG2 digitalWrite(PIN_TEST2, HIGH); digitalWrite(PIN_TEST2, LOW);
+#define DEBUG3 digitalWrite(PIN_TEST2, HIGH); digitalWrite(PIN_TEST2, LOW);
 
 
 
 //******************************************************************************
-// Initialize a DCC output pin for direct register access (DxCore)
+// Initialize a DCC output pin for direct register access (ATMega 328 / 2560)
 // Parameters:
 //   - pinObj: DccOut_t object holding port registers and bit mask
 //   - arduinoPin: Arduino pin number; set to 0xFF if unused
@@ -189,7 +190,7 @@ inline void dccSecondHalfBitToggle(void) {
 // For valid pins, this function:
 //   - Sets the pin as OUTPUT
 //   - Maps the Arduino pin to its PORTx registers
-//   - Stores pointers to OUTSET, OUTCLR, OUTTGL registers
+//   - Stores pointers to PORTx registers
 //   - Stores the pin bit mask in the structure
 //   - Disables toggling initially (enable = false)
 //
@@ -200,17 +201,12 @@ inline void initDccPin(DccOut_t &pinObj, uint8_t arduinoPin) {
   if (arduinoPin != 0xFF) {
     pinMode(arduinoPin, OUTPUT);                  // Port is output
     uint8_t port = digitalPinToPort(arduinoPin);  // Mapping from pin to port
-    volatile PORT_t *p = portToPortStruct(port);  // Local pointer to the port
-    pinObj.outset = &p->OUTSET;                   // Register to set output
-    pinObj.outclr = &p->OUTCLR;                   // Register to clear output
-    pinObj.outtgl = &p->OUTTGL;                   // Register to toggle output
+    pinObj.port = portOutputRegister(port);       // Port register
     pinObj.bit = digitalPinToBitMask(arduinoPin); // pin bitmask
     pinObj.enable = false;                        // Toggle pin not allowed
   }
   else {
-    pinObj.outset = nullptr;
-    pinObj.outclr = nullptr;
-    pinObj.outtgl = nullptr;
+    pinObj.port = nullptr;
     pinObj.bit = 0;
     pinObj.enable = false;
   }
@@ -218,11 +214,11 @@ inline void initDccPin(DccOut_t &pinObj, uint8_t arduinoPin) {
 
 
 //******************************************************************************
-// Setup DCC waveform generator (DxCore, TCB1)
+// Setup DCC waveform generator (ATMega 328 / 2560)
 // This function configures the hardware and pins for DCC output:
-//   - Stops TCB1 to safely modify registers
+//   - Stops Timer1 to safely modify registers
 //   - Initializes rail, inverted rail, and monitor pins via initDccPin()
-//   - Configures TCB1 in periodic interrupt mode, sets initial compare value
+//   - Configures Timer1 in CTC mode, sets initial compare value
 //   - Clears pending interrupts and enables capture/timeout interrupt
 //   - Sets the three pins to their initial states (rail LOW, inverted HIGH,
 //     monitor LOW)
@@ -232,29 +228,29 @@ inline void initDccPin(DccOut_t &pinObj, uint8_t arduinoPin) {
 // Timing definitions (one/zero/half-bit) are derived from F_CPU
 //******************************************************************************
 void DccPacketEngine::setupWaveformGenerator() {
-  // We must stop the timer, since it is using the same registers as we may
+  // We must stop timer1 first, since it is using the same registers as we may
   // subsequently modify. If we don't stop the timer first, the code may crash.
-  TCB1.CTRLA = 0;                       // stop + reset control A
+  TCCR1A = 0;   // Normal port operation, disconnect OC1A/OC1B
+  TCCR1B = 0;   // Stop the timer by clearing clock select bits
   // Initialise the structure with registers and mask for the three pins
   // If a pin is not used (0xFF), the pointers to the registers will be cleared
   initDccPin(dccRail, dccRailPin);
   initDccPin(dccRailInv, dccRailInvPin);
   initDccPin(dccMonitor, dccMonitorPin);
-  // DCC_USES_TCB1 - DxCore
-  TCB1.CTRLB = TCB_CNTMODE_INT_gc;      // periodic interrupt mode
-  TCB1.CCMP  = one_count;               // start with "1" timing
-  TCB1.INTFLAGS = TCB_CAPT_bm;          // clear pending interrupt flag
-  TCB1.INTCTRL  = TCB_CAPT_bm;          // enable capture/timeout interrupt
-  TCB1.CTRLA = TCB_CLKSEL_CLKDIV1_gc | TCB_ENABLE_bm;   // CLK_PER, enable
+  // Configure Timer1 in CTC mode.
+  TCCR1A = 0;                          // Normal port operation, OC1A/OC1B disconnected
+  TCCR1B = (1 << WGM12) | (1 << CS10); // CTC mode, prescaler 1
+  OCR1A = zero_count;                  // Start with "0" pulse duration
+  TCNT1 = 0;                           // Reset timer count
+  TIMSK1 = (1 << OCIE1A);              // Enable Timer1 Compare Match A interrupt
   // Set the three pins to their start value
-  DCC_OUT_LOW;
-  DCC_OUT_INV_HGH;
-  DCC_OUT_MON_LOW;
+  DCC_OUT_HGH;
+  DCC_OUT_INV_LOW;
+  DCC_OUT_MON_HGH;
   // Enable the three output channels
   dccRail.enable = true;
   dccRailInv.enable = true;
   dccMonitor.enable = true;
-
   // Start with a DCC low-signal
   TMR_ZERO();
 }
