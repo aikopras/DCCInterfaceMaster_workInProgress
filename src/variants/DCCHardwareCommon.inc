@@ -131,9 +131,6 @@ void DccPacketEngine::send(const uint8_t* data, uint8_t size) {
   // Check if this is a SM packet
   // RCN-216: Service Mode packets have 0111xxxx as first byte
   dccISR.packetIsSmPacket = (data[0] & 0xF0) == 0b01110000;
-
-if (dccISR.packetIsSmPacket) {digitalWrite(PIN_PD7, HIGH);digitalWrite(PIN_PD7, LOW);}
-
   // Copy the received data to nextPacket
   noInterrupts();
   for (uint8_t i = 0; i < size; i++) dccISR.nextPacket[i] = data[i];
@@ -257,7 +254,7 @@ void DccPacketEngine::RunOutputSignal() {
 // Thus every 100us (0-bit), 58us (1-bit or 29us (RailCom start bit)
 
 ISR_START {
-  digitalWriteFast(PIN_PD6,HIGH);
+//  digitalWriteFast(PIN_PD6,HIGH);
 
   ISR_PROLOGUE;                  // Processor specific code may be here
   uint8_t mask;                  // helper to determine which bit we are
@@ -449,7 +446,7 @@ ISR_START {
   // Next ISR we will take the other halfbit
   dccISR.firstHalfBit = !dccISR.firstHalfBit;
 
-  digitalWriteFast(PIN_PD6,LOW);
+//  digitalWriteFast(PIN_PD6,LOW);
 
 
 }; // End ISR

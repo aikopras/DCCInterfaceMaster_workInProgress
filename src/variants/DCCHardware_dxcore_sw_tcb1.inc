@@ -1,4 +1,5 @@
-//******************************************************************************************************
+//******************************************************************************
+
 //
 // File:            DCCHardware_dxcore_sw_tcb1.inc
 // Purpose:         DCC Waveform Generator for DxCore processors (bit-banging)
@@ -22,29 +23,32 @@
 //     * Added support for service mode, RailCom cutouts and 3 DCC output pins
 //
 // Hardware layer overview:
-// This file implements a DxCore-specific hardware layer connecting the processor-independent
-// DCC state machine (DCCHardwareCommon.inc) to the AVR Dx hardware. It provides:
+// This file implements a DxCore-specific hardware layer connecting the
+// processor-independent DCC state machine (DCCHardwareCommon.inc) to the
+// AVR Dx hardware. It provides:
 //   - Configuration of a TCB timer for periodic half-bit interrupts
 //   - Binding of the generic ISR to the correct interrupt vector
 //   - Inline functions and macros for timing and pin control
 //   - Initialization and enabling of the rail and monitor outputs
 //
 // Pin control and toggling:
-// The driver uses software-controlled toggles (bit-banging) via direct register access.
-// The normal rail, inverted rail, and monitor outputs are each represented by a small
-// structure containing the port registers and bitmask. Output transitions are triggered
-// explicitly in the ISR for deterministic timing.
+// The driver uses software-controlled toggles (bit-banging) via
+// direct register access.
+// The normal rail, inverted rail, and monitor outputs are each represented
+// by a small structure containing the port registers and bitmask. Output
+// transitions are triggered explicitly in the ISR for deterministic timing.
 //
 // Toggling strategy and H-bridge safety:
-// - All rail transitions use toggles rather than set/clear to maintain consistent
-//   behavior between software- and hardware-generated approaches.
-// - When both normal and inverted rail outputs are enabled, their toggles are executed
-//   back-to-back to minimize temporal offset and produce the cleanest zero-crossing
-//   of the H-bridge output signal.
-// - H-bridge safety requirement: both legs must never be high simultaneously to avoid
-//   shoot-through. Therefore, the toggle order within each half-bit is critical.
+// - All rail transitions use toggles rather than set/clear to maintain
+//   consistent behavior between software- and hardware-generated approaches.
+// - When both normal and inverted rail outputs are enabled, their toggles are
+//   executed back-to-back to minimize temporal offset and produce the cleanest
+//   zero-crossing of the H-bridge output signal.
+// - H-bridge safety requirement: both legs must never be high simultaneously
+//   to avoid shoot-through.
+//   Therefore, the toggle order within each half-bit is critical.
 //
-//******************************************************************************************************
+//******************************************************************************
 #include <Arduino.h>
 #include "../DCCHardware.h"
 
@@ -78,52 +82,6 @@ static DccOut_t dccRailInv;   // Create an instance for the dccRailInv
 #define DCC_OUT_MON_LOW      {*dccMonitor.outclr = dccMonitor.bit;}
 #define DCC_OUT_MON_TGL      {*dccMonitor.outtgl = dccMonitor.bit;}
 
-
-//******************************************************************************
-// First half-bit toggle
-// During the first half-bit, the normal rail output starts LOW and the
-// inverted rail output starts HIGH. To maintain proper H-bridge operation
-// and clean zero-crossing:
-//   - When both rails are enabled, the inverted rail is toggled first,
-//     immediately followed by the normal rail.
-//   - The monitor output is toggled if enabled.
-// This order is critical to avoid shoot-through.
-// In hardware-assisted mode (toggle-on-compare-match), this function will be
-// empty, as the timer handles the transitions automatically.
-//******************************************************************************
-inline void dccFirstHalfBitToggle(void) {
-  if (dccRailInv.enable && dccRail.enable) {
-    DCC_OUT_INV_TGL;
-    DCC_OUT_TGL;
-  } else {
-    if (dccRailInv.enable) DCC_OUT_INV_TGL;
-    if (dccRail.enable) DCC_OUT_TGL;
-    }
-  if (dccMonitor.enable) DCC_OUT_MON_TGL;
-}
-
-//******************************************************************************
-// Second half-bit toggle
-// During the second half-bit, the normal rail output starts HIGH and the
-// inverted rail output starts LOW.
-// To maintain proper H-bridge operation and clean zero-crossing:
-//   - When both rails are enabled, the normal rail is toggled first,
-//     immediately followed by the inverted rail.
-//   - The monitor output is toggled if enabled.
-// This order is critical to avoid shoot-through.
-// In hardware-assisted mode (toggle-on-compare-match), this function will be
-// empty, as the timer handles the transitions automatically.
-//******************************************************************************
-inline void dccSecondHalfBitToggle(void) {
-  if (dccRailInv.enable && dccRail.enable) {
-    DCC_OUT_TGL;
-    DCC_OUT_INV_TGL;
-  } else {
-    if (dccRailInv.enable) DCC_OUT_INV_TGL;
-    if (dccRail.enable) DCC_OUT_TGL;;
-    }
-  if (dccMonitor.enable) DCC_OUT_MON_TGL;
-}
 
 //******************************************************************************
 // Timer and TCB macros for DCC waveform generation
@@ -174,10 +132,10 @@ inline void dccSecondHalfBitToggle(void) {
 #define DISABLE_DCCINV             {dccRailInv.enable = false;}
 
 
+// TODO: FOR TESTING
 #define DEBUG1 digitalWrite(PIN_PB3, HIGH); digitalWrite(PIN_PB3, LOW);
 #define DEBUG2 digitalWrite(PIN_PB4, HIGH); digitalWrite(PIN_PB4, LOW);
 #define DEBUG3 digitalWrite(PIN_PB5, HIGH); digitalWrite(PIN_PB5, LOW);
-
 
 
 //******************************************************************************
@@ -257,6 +215,53 @@ void DccPacketEngine::setupWaveformGenerator() {
 
   // Start with a DCC low-signal
   TMR_ZERO();
+}
+
+
+//******************************************************************************
+// First half-bit toggle
+// During the first half-bit, the normal rail output starts LOW and the
+// inverted rail output starts HIGH. To maintain proper H-bridge operation
+// and clean zero-crossing:
+//   - When both rails are enabled, the inverted rail is toggled first,
+//     immediately followed by the normal rail.
+//   - The monitor output is toggled if enabled.
+// This order is critical to avoid shoot-through.
+// In hardware-assisted mode (toggle-on-compare-match), this function will be
+// empty, as the timer handles the transitions automatically.
+//******************************************************************************
+inline void dccFirstHalfBitToggle(void) {
+  if (dccRailInv.enable && dccRail.enable) {
+    DCC_OUT_INV_TGL;
+    DCC_OUT_TGL;
+  } else {
+    if (dccRailInv.enable) DCC_OUT_INV_TGL;
+    if (dccRail.enable) DCC_OUT_TGL;
+    }
+  if (dccMonitor.enable) DCC_OUT_MON_TGL;
+}
+
+//******************************************************************************
+// Second half-bit toggle
+// During the second half-bit, the normal rail output starts HIGH and the
+// inverted rail output starts LOW.
+// To maintain proper H-bridge operation and clean zero-crossing:
+//   - When both rails are enabled, the normal rail is toggled first,
+//     immediately followed by the inverted rail.
+//   - The monitor output is toggled if enabled.
+// This order is critical to avoid shoot-through.
+// In hardware-assisted mode (toggle-on-compare-match), this function will be
+// empty, as the timer handles the transitions automatically.
+//******************************************************************************
+inline void dccSecondHalfBitToggle(void) {
+  if (dccRailInv.enable && dccRail.enable) {
+    DCC_OUT_TGL;
+    DCC_OUT_INV_TGL;
+  } else {
+    if (dccRailInv.enable) DCC_OUT_INV_TGL;
+    if (dccRail.enable) DCC_OUT_TGL;;
+    }
+  if (dccMonitor.enable) DCC_OUT_MON_TGL;
 }
 
 
