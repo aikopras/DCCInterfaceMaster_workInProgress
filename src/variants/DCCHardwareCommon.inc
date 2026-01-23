@@ -103,13 +103,16 @@ struct DCC_ISR_State {
   volatile DCC_output_state_t state = dccPreambleStartBit; // Initial state of the ISR state machine
   volatile uint8_t bitsRemaining = PREAMBLE_LENGTH;        // Bits remaining in current phase (preamble or data byte)
   volatile uint8_t bytesRemainingInPacket = 0;             // How many bytes left to send
-  volatile uint8_t nextPacket[6] = {0, 0, 0, 0, 0, 0};     // Next packet waiting to be sent
+  volatile uint8_t nextPacket[MaxDccSize] = {};            // Next packet waiting to be sent
   volatile uint8_t nextPacketSize = 0;                     // Number of bytes in next packet
-  volatile uint8_t currentPacket[6] = {0, 0, 0, 0, 0, 0};  // Current packet being sent
+  volatile uint8_t currentPacket[MaxDccSize] = {};         // Current packet being sent
   volatile uint8_t currentPacketSize = 0;                  // Number of bytes in current packet
+  volatile uint8_t defaultPacket[3] = {0xFF, 0, 0xFF};     // Pre-generated default IDLE packet (Reset for SM)
+  volatile uint8_t defaultPacketSize = 3;                  // Always 3 bytes
   volatile bool firstHalfBit = true;	                     // The ISR starts with the first DCC Halfbit
   volatile bool firstHalfBitRC = true;	                   // And the first part of the Railcom start bit
   volatile bool smEnabled = false;                         // SM active (long preamble, resets, SM flow allowed)
+  volatile bool packetIsSmPacket = false;                  // We have to send Service Mode Packets
   volatile uint8_t smRepeatsRemaining = 0;                 // Number of retransmissions left for this SM packet
   volatile uint8_t smMaxRepeats = 10;	                     // Number of SM retransmissions after first send
   volatile bool railComGapFlag = false;	                   // In the gap, this flag is guaranteed to be true
@@ -124,6 +127,13 @@ static DCC_ISR_State dccISR;                              // Create an instance 
 //******************************************************************************
 void DccPacketEngine::send(const uint8_t* data, uint8_t size) {
   if (size == 0 || size > MaxDccSize) return;   // Illegal packet size
+
+  // Check if this is a SM packet
+  // RCN-216: Service Mode packets have 0111xxxx as first byte
+  dccISR.packetIsSmPacket = (data[0] & 0xF0) == 0b01110000;
+
+if (dccISR.packetIsSmPacket) {digitalWrite(PIN_PD7, HIGH);digitalWrite(PIN_PD7, LOW);}
+
   // Copy the received data to nextPacket
   noInterrupts();
   for (uint8_t i = 0; i < size; i++) dccISR.nextPacket[i] = data[i];
@@ -138,12 +148,24 @@ void DccPacketEngine::send(const uint8_t* data, uint8_t size) {
 void DccPacketEngine::enterServiceMode(void) {
   // Enable Service Mode behaviour (long preamble, reset packets, SM flow).
   dccISR.smEnabled = true;
+  // Pre-generate the reset packet (to make the ISR faster)
+  noInterrupts();
+  dccISR.defaultPacket[0] = 0;
+  dccISR.defaultPacket[1] = 0;
+  dccISR.defaultPacket[2] = 0;
+  interrupts();
 }
 
 void DccPacketEngine::leaveServiceMode(void) {
   // Leave Service Mode immediately. Ongoing SM retransmissions are cancelled.
   dccISR.smEnabled = false;
   dccISR.smRepeatsRemaining = 0;
+  // Pre-generate the idle packet (to make the ISR faster)
+  noInterrupts();
+  dccISR.defaultPacket[0] = 0xFF;
+  dccISR.defaultPacket[1] = 0;
+  dccISR.defaultPacket[2] = 0xFF;
+  interrupts();
 }
 
 bool DccPacketEngine::isServiceModeEnabled(void) {
@@ -228,28 +250,6 @@ void DccPacketEngine::RunOutputSignal() {
 
 
 //******************************************************************************
-// 8. Inline ISR support routines
-//******************************************************************************
-static inline void startServiceModeRepeats() {
-  // Called once when a new SM packet is accepted.
-  // Sets the repeat counter for this packet.
-  dccISR.smRepeatsRemaining = dccISR.smMaxRepeats;
-}
-
-static inline void advanceServiceModeRepeat() {
-  // Called when we resend the same SM packet again.
-  // When this reaches 0, a new packet may be accepted.
-  if (dccISR.smRepeatsRemaining > 0)
-    dccISR.smRepeatsRemaining--;
-}
-
-static inline bool isServiceModeAckPacket(volatile uint8_t *packet) {
-  // RCN-216: Service Mode packets have 0111xxxx as first byte
-  return (packet[0] & 0xF0) == 0b01110000;
-}
-
-
-//******************************************************************************
 //**********************************  ISR   ************************************
 //******************************************************************************
 // This is the Interrupt Service Routine (ISR).
@@ -257,7 +257,7 @@ static inline bool isServiceModeAckPacket(volatile uint8_t *packet) {
 // Thus every 100us (0-bit), 58us (1-bit or 29us (RailCom start bit)
 
 ISR_START {
-  digitalWrite(9,HIGH);
+  digitalWriteFast(PIN_PD6,HIGH);
 
   ISR_PROLOGUE;                  // Processor specific code may be here
   uint8_t mask;                  // helper to determine which bit we are
@@ -317,46 +317,30 @@ ISR_START {
       // Send that '0', then move to dccData
       case dccStartBitPacket:
         TMR_ZERO();
-        // Check if we have received a next packet to send?
-        if (dccPacketEngine.canAcceptPacket) {	// No new packet from user received
-          if (dccPacketEngine.isServiceModeEnabled()) {
-            //load a default reset packet!
-            dccISR.currentPacket[0] = 0;
-            dccISR.currentPacket[1] = 0;
-            dccISR.currentPacket[2] = 0;
-            dccISR.currentPacketSize = 3;  //feed to the starting ISR.
-          }
-          else {
-            //load a default idle packet!
-            dccISR.currentPacket[0] = 0xFF;
-            dccISR.currentPacket[1] = 0;
-            dccISR.currentPacket[2] = 0xFF;
-            dccISR.currentPacketSize = 3;  //feed to the starting ISR.
-          }
-        }
-        else {
-          // We received a new packet.  Can we use it, or are we still retransmitting SM packets?
-          if (!dccPacketEngine.isServiceModeRepeating()) {
-            // Yes, we can copy
+        // We can proces a new packet provided we don't have to repeat earlier SM packets
+        if (!dccPacketEngine.isServiceModeRepeating()) {
+          // Did the application code already gave us a new packet?
+          // In that case dccPacketEngine.canAcceptPacket is false
+          if (!dccPacketEngine.canAcceptPacket) {
+            // use next user packet
             for (uint8_t i = 0; i < dccISR.nextPacketSize; i++)
               dccISR.currentPacket[i] = dccISR.nextPacket[i];
             dccISR.currentPacketSize = dccISR.nextPacketSize;
-            // Before we tell the user that we can accept the next packet, we first check
-            // if this is a SM packet that must be retransmitted. Retransmissions are
-            // needed to make SM-ACK responses more reliable. We therefore check if this is
-            // a SM packet.
-            if (isServiceModeAckPacket(dccISR.currentPacket)) {
-             	// CV read/write packet with ACK response!
-              startServiceModeRepeats();
-            }
+            // Setup SM retransmission if required
+            if (dccISR.packetIsSmPacket)
+              dccISR.smRepeatsRemaining = dccISR.smMaxRepeats;
+          } else {
+            // No new packet: load default packet
+            dccISR.currentPacket[0] = dccISR.defaultPacket[0];
+            dccISR.currentPacket[1] = dccISR.defaultPacket[1];
+            dccISR.currentPacket[2] = dccISR.defaultPacket[2];
+            dccISR.currentPacketSize = 3;
           }
-          else  {
-            // No, we couldn't copy, since we still need to retransmit SM packets.
-            advanceServiceModeRepeat();
-          }
+          dccPacketEngine.canAcceptPacket = true; // ready for next packet
+        } else {
+          // still repeating SM packet, decrement counter
+          if (dccISR.smRepeatsRemaining > 0) dccISR.smRepeatsRemaining--;
         }
-        if (!dccPacketEngine.isServiceModeRepeating())
-          dccPacketEngine.canAcceptPacket = true;  // we can accept the next packet
       break;
 
       case dccStartBitData:
@@ -465,6 +449,7 @@ ISR_START {
   // Next ISR we will take the other halfbit
   dccISR.firstHalfBit = !dccISR.firstHalfBit;
 
-  digitalWrite(9,LOW);
+  digitalWriteFast(PIN_PD6,LOW);
+
 
 }; // End ISR
