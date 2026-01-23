@@ -67,10 +67,7 @@ DccPacketEngine::DccPacketEngine(){
   dccRailPin = 6;                                 // Pin for DCC rail Signal, with RailCom support
   dccRailInvPin = 0xFF;	                          // Pin for DCC rail Signal, with RailCom support. Inverted
   dccMonitorPin = 0xFF;	                          // Pin for a continuous DCC Signal, ignoring the RailCom gap / Railpower
-  // Packet related
-  isWaiting = true;                               // notify to update() that we need the first packet
-  dataSize = 0;
-  for(int i=0; i<MaxDccSize; i++) {data[i] = 0;}
+  canAcceptPacket = true;                         // ISR is ready to receive the first packet from the user update() code
 }
 
 // dccPacketEngine is the object that controls packet transmission for different hardware
@@ -106,6 +103,8 @@ struct DCC_ISR_State {
   volatile DCC_output_state_t state = dccPreambleStartBit; // Initial state of the ISR state machine
   volatile uint8_t bitsRemaining = PREAMBLE_LENGTH;        // Bits remaining in current phase (preamble or data byte)
   volatile uint8_t bytesRemainingInPacket = 0;             // How many bytes left to send
+  volatile uint8_t nextPacket[6] = {0, 0, 0, 0, 0, 0};     // Next packet waiting to be sent
+  volatile uint8_t nextPacketSize = 0;                     // Number of bytes in next packet
   volatile uint8_t currentPacket[6] = {0, 0, 0, 0, 0, 0};  // Current packet being sent
   volatile uint8_t currentPacketSize = 0;                  // Number of bytes in current packet
   volatile bool firstHalfBit = true;	                     // The ISR starts with the first DCC Halfbit
@@ -120,9 +119,21 @@ struct DCC_ISR_State {
 
 static DCC_ISR_State dccISR;                              // Create an instance of the struct for the ISR
 
+//******************************************************************************
+// 4. Packet send interface method
+//******************************************************************************
+void DccPacketEngine::send(const uint8_t* data, uint8_t size) {
+  if (size == 0 || size > MaxDccSize) return;   // Illegal packet size
+  // Copy the received data to nextPacket
+  noInterrupts();
+  for (uint8_t i = 0; i < size; i++) dccISR.nextPacket[i] = data[i];
+  dccISR.nextPacketSize = size;
+  dccPacketEngine.canAcceptPacket = false;      // ISR must first copy Packet
+  interrupts();
+}
 
 //******************************************************************************
-// 4. Service Mode interface methods
+// 5. Service Mode interface methods
 //******************************************************************************
 void DccPacketEngine::enterServiceMode(void) {
   // Enable Service Mode behaviour (long preamble, reset packets, SM flow).
@@ -163,7 +174,7 @@ void DccPacketEngine::stopServiceModeRepeats(void) {
 
 
 //******************************************************************************
-// 5. RailCom interface methods
+// 6. RailCom interface methods
 //******************************************************************************
 void DccPacketEngine::setRailCom(bool active) { // Enable / disable generation of the RailCom gap
   dccISR.railCom = active;
@@ -189,7 +200,7 @@ bool DccPacketEngine::railComGap(void) {
 
 
 //******************************************************************************
-// 6. Start / Stop interface methods
+// 7. Start / Stop interface methods
 //******************************************************************************
 void DccPacketEngine::StopOutputSignal() {
   // This routine may be called when a short circuit is detected or when the user
@@ -217,7 +228,7 @@ void DccPacketEngine::RunOutputSignal() {
 
 
 //******************************************************************************
-// 7. Inline ISR support routines
+// 8. Inline ISR support routines
 //******************************************************************************
 static inline void startServiceModeRepeats() {
   // Called once when a new SM packet is accepted.
@@ -299,7 +310,7 @@ ISR_START {
       break;
 
       case dccPreamble:
-        // Nothing to doe
+        // Nothing to do
       break;
 
       // About to send a data byte, but have to preceed the data with a '0' (start bit).
@@ -307,7 +318,7 @@ ISR_START {
       case dccStartBitPacket:
         TMR_ZERO();
         // Check if we have received a next packet to send?
-        if (dccPacketEngine.isWaiting) {	// We didn't get the next packet until now!
+        if (dccPacketEngine.canAcceptPacket) {	// No new packet from user received
           if (dccPacketEngine.isServiceModeEnabled()) {
             //load a default reset packet!
             dccISR.currentPacket[0] = 0;
@@ -327,13 +338,9 @@ ISR_START {
           // We received a new packet.  Can we use it, or are we still retransmitting SM packets?
           if (!dccPacketEngine.isServiceModeRepeating()) {
             // Yes, we can copy
-            dccISR.currentPacket[0] = dccPacketEngine.data[0];
-            dccISR.currentPacket[1] = dccPacketEngine.data[1];
-            dccISR.currentPacket[2] = dccPacketEngine.data[2];
-            dccISR.currentPacket[3] = dccPacketEngine.data[3];
-            dccISR.currentPacket[4] = dccPacketEngine.data[4];
-            dccISR.currentPacket[5] = dccPacketEngine.data[5];
-            dccISR.currentPacketSize = dccPacketEngine.dataSize;
+            for (uint8_t i = 0; i < dccISR.nextPacketSize; i++)
+              dccISR.currentPacket[i] = dccISR.nextPacket[i];
+            dccISR.currentPacketSize = dccISR.nextPacketSize;
             // Before we tell the user that we can accept the next packet, we first check
             // if this is a SM packet that must be retransmitted. Retransmissions are
             // needed to make SM-ACK responses more reliable. We therefore check if this is
@@ -349,7 +356,7 @@ ISR_START {
           }
         }
         if (!dccPacketEngine.isServiceModeRepeating())
-          dccPacketEngine.isWaiting = true;  // we can accept the next packet
+          dccPacketEngine.canAcceptPacket = true;  // we can accept the next packet
       break;
 
       case dccStartBitData:

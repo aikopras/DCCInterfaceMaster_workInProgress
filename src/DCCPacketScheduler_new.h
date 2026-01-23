@@ -151,6 +151,8 @@
 #endif
 /*******************************************************************/
 
+#define MaxDccSize 6            // DCC messages can have a length upto this value
+
 #define E_STOP_QUEUE_SIZE        15
 #define REPEAT_QUEUE_SIZE        25
 #define PROG_QUEUE_SIZE			 5
