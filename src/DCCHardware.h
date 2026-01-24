@@ -12,15 +12,9 @@ class DccPacketEngine {
     uint8_t dccRailInvPin;	                      // Pin for DCC rail Signal, with RailCom support. Inverted
     uint8_t dccMonitorPin;                        // Pin for a continuous DCC Signal, ignoring the RailCom gap / Railpower
 
-    // DCC message specifics - old
-//    volatile uint8_t data[MaxDccSize];            // The contents of the last dcc message received
-//    volatile uint8_t dataSize;                    // 3 .. 6, including XOR
-//    volatile uint8_t isWaiting;                   // Flag that next DCC message can be offered to the ISR
-
     // DCC message specifics - new
     volatile bool canAcceptPacket;                // Flag that tells the user that a new packet may be sent
     void send(const uint8_t* data, uint8_t size); // Sends a DCC packet (3–6 bytes including XOR).
-
 
     // Service Mode (SM): Methods to enter / leave
     void enterServiceMode(void);                  // send Long preamble, resets and repeat SM packets
@@ -44,6 +38,9 @@ class DccPacketEngine {
     void setupWaveformGenerator();                // Setup and start the waveform generator (ISR)
 
     DccPacketEngine();                            // Constructor declaration
+
+  private:
+    void resetStateMachine();                     // To (re)set the state machine to a defined state
 };
 
 extern DccPacketEngine dccPacketEngine;           // The dccPacketEngine must be accessible externally

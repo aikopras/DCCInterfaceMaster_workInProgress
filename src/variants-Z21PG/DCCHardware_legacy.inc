@@ -6,6 +6,9 @@
 *
 */
 
+// NOTE: THIS FILE IS FOT TESTING ONLY
+// DON'T USE IT YET FOR PRODUCTION
+// AN IMPROVED VARIANT WILL BE WRITTEN LATER
 
 #include "Arduino.h"
 
@@ -35,9 +38,6 @@ DccPacketEngine::DccPacketEngine(){
   dataSize = 0;
   for(int i=0; i<MaxDccSize; i++) {data[i] = 0;}
   serviceMode = 0;                                // This is not a Servoce Mode packet
-  serviceModeRepeat = 10;	                        // Initial value for Service Mode Packets repeats
-  railCom = false;	                              // Should we have a Railcom cut-out in the preamble?
-  powerStatus = false;                          	//set the railsignal on/off
 }
 
 
@@ -73,9 +73,12 @@ struct DCC_ISR_State {
   volatile uint8_t bytesRemainingInPacket = 0;            // How many bytes left to send
   volatile uint8_t currentPacket[6] = {0, 0, 0, 0, 0, 0}; // Current packet being sent
   volatile uint8_t currentPacketSize = 0;                 // Number of bytes in current packet
-  volatile bool railComGapActive = false;                 // Are we within a Railcom gap?
-  volatile bool railComStartBit = false;		              // Is the current pulse for a RailCom start bit?
+  volatile uint8_t serviceModeRepeat = 10;	              // Scheduler may change this value
   volatile bool firstHalfBit = false;	                    // Must be initialised as false
+  volatile bool railComGapActive = false;                 // Are we within a Railcom gap?
+  volatile bool railCom = true;                           // Should we generate a RailCom gap?
+  volatile bool railComStartBit = false;		              // Is the current pulse for a RailCom start bit?
+  volatile bool railPower;	                              // Controls if the railsignal is on/off
 };
 
 static DCC_ISR_State dccISR;                              // Create a global instance of the struct for the ISR
@@ -181,7 +184,7 @@ void DCC_ARM_TC_SIGNAL
   }
 
   // Set the output for the normal and inverse DCC Pins
-  if (dccPacketEngine.powerStatus) {	       // Railpower ON?
+  if (dccISR.railPower) {	                   // Railpower ON?
     if (dccISR.railComGapActive) {	         // Are we within a Railcom CutOut?
       // Within the RailCom gap, both rail pins should be low, to ensure that any
       // connected H-Bridge / Booster doesn't put any signal on the line
@@ -201,8 +204,6 @@ void DCC_ARM_TC_SIGNAL
     }
   }
 
-
-//   digitalWrite(8,HIGH);digitalWrite(8,LOW);
 
   // ===========================================================================
   // PART 2A: SECOND HALFBIT: RAILCOM STARTBIT AND GAP
@@ -239,14 +240,11 @@ void DCC_ARM_TC_SIGNAL
     // memory region accessed). In future versions this structure may be changed
     // back to switch/case.
 
-//        digitalWrite(8,HIGH);digitalWrite(8,LOW);
-
-
     // The Idle and preamble state are taken together
     if (dccISR.state == dccIdle || dccISR.state == dccSendPreamble) {
       if (dccISR.state == dccIdle) {
         // Check if this pulse should become a RailCom startbit.
-        if ((dccPacketEngine.railCom) && (dccPacketEngine.serviceMode == 0)) { //in Service Mode no RailCom
+        if ((dccISR.railCom) && (dccPacketEngine.serviceMode == 0)) { //in Service Mode no RailCom
           TMR_SET_RAILCOM_STARTBIT();             // set the timer, to trigger after 29us
           dccISR.railComGapActive = true;	        // start railcom cutout within the next circle
           dccISR.railComStartBit = true;		      // next Bit has only halve length
@@ -267,8 +265,6 @@ void DCC_ARM_TC_SIGNAL
     else if (dccISR.state == dccSendStartBit) {
         TMR_SET_ZERO();
         // Check if we have received a next packet to send?
-        if (dccPacketEngine.isWaiting) {digitalWrite(9,HIGH);digitalWrite(9,LOW);}
-
         if (dccPacketEngine.isWaiting) {	//ERROR! - We didn't get the next packet until now!
           if (dccPacketEngine.serviceMode > 0) {
             //load a default reset packet!
@@ -288,6 +284,8 @@ void DCC_ARM_TC_SIGNAL
         else {
           // We received a new packet.  Can we use it, or are we still retransmitting SM packets?
           if ((dccPacketEngine.serviceMode == 0xFF) || (dccPacketEngine.serviceMode == 0)) {
+
+
             // Yes, we can copy
             dccISR.currentPacket[0] = dccPacketEngine.data[0];
             dccISR.currentPacket[1] = dccPacketEngine.data[1];
@@ -301,9 +299,8 @@ void DCC_ARM_TC_SIGNAL
             // needed to make SM-ACK responses more reliable. We therefore check if this is
             // a SM packet, and if yes, set the serviceMode to 0xFF minus the number
             // of required retransmissions.
-
             if ((dccISR.currentPacket[0] >> 4) == 0b0111) 		// CV read/write packet with ACK response!
-              dccPacketEngine.serviceMode = 0xFF - dccPacketEngine.serviceModeRepeat;
+              dccPacketEngine.serviceMode = 0xFF - dccISR.serviceModeRepeat;
           }
           // No, we couldn't copy, since we still need to retransmit SM packets.
           else dccPacketEngine.serviceMode++;	//count of internal Service Mode Packet repeat
@@ -364,22 +361,33 @@ void DCC_ARM_TC_SIGNAL
 
 
 //******************************************************************************
-// RailCom helper routines
+// Helper routines
 //******************************************************************************
 bool DccPacketEngine::railComGap(void) {return dccISR.railComGapActive;}
+
+void DccPacketEngine::setRailCom(bool active) {
+  // Enable / disable generation of the RailCom gap
+  dccISR.railCom = active;
+}
+
+
+void DccPacketEngine::setServiceModeRepeat(uint8_t value) {
+  // How often will a Service Mode Packet be repeated?
+  dccISR.serviceModeRepeat = value;
+}
 
 //******************************************************************************
 // Start / Stop
 //******************************************************************************
 void DccPacketEngine::StopOutputSignal() {
-	powerStatus = false;
+	dccISR.railPower = false;
   // Both DCC output pins must be made inactive / low
 	digitalWrite(dccRailPin, LOW);
 	if (dccRailInvPin != 0xFF) digitalWrite(dccRailInvPin, LOW);
 }
 
 void DccPacketEngine::RunOutputSignal() {
-	powerStatus = true;
+	dccISR.railPower = true;
 }
 
 

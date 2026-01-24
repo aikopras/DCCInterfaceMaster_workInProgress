@@ -1107,10 +1107,8 @@ bool DCCPacketScheduler::eStop(uint16_t address)
 void DCCPacketScheduler::update(void) {
 	//CV read packet is on Prog.Track:
   if (dccPacketEngine.isServiceModeRepeating()) {
-		if (notifyCurrentSence) {	//get the Base rail current
-			uint16_t current_load_now = notifyCurrentSence();
-// TODO: AANPASSEN
-//			if (dccPacketEngine.serviceMode == (0xFF - ProgRepeat)) {	//first packet - base current!
+		if (notifyCurrentSense) {	//get the Base rail current
+			uint16_t current_load_now = notifyCurrentSense();
       if (dccPacketEngine.isFirstServiceModePacket()) {
         // First SM packet - get base current voltage:
 				if (current_ack_status != WAIT_FOR_ACK) {
@@ -1124,7 +1122,7 @@ void DCCPacketScheduler::update(void) {
 			}
 			else {
 				//current load detect:
-				if ((current_load_now > (LASTVAmpSence + ACK_SENCE_VALUE))) {
+				if ((current_load_now > (LASTVAmpSence + ACK_SENSE_VALUE))) {
 					if (current_ack_status == WAIT_FOR_ACK) {
 						current_ack_status = ACK_DETECTED;
 						ack_start_time = micros();
@@ -1137,8 +1135,8 @@ void DCCPacketScheduler::update(void) {
 				}
 				else {
 					if (current_ack_status == ACK_DETECTED) {
-						if ( ((micros() - ack_start_time) / 1000) >= ACK_SENCE_MIN) {
-							if ( ((micros() - ack_start_time) / 1000) <= ACK_SENCE_MAX) {	//sec.
+						if ( ((micros() - ack_start_time) / 1000) >= ACK_SENSE_MIN) {
+							if ( ((micros() - ack_start_time) / 1000) <= ACK_SENSE_MAX) {	//sec.
 								current_ack_status = ACK_READ_SUCCESS;
 							}
 							else current_ack_status = ACK_READ_FAIL;
@@ -1154,7 +1152,9 @@ void DCCPacketScheduler::update(void) {
 	} //ENDE Service-Mode operation
 
 	//Get next packet:
-  if (dccPacketEngine.isWaiting)      //if the ISR needs a packet:
+  // TODO: Old => remove!
+  // if (dccPacketEngine.isWaiting)          //if the ISR needs a packet:
+  if (dccPacketEngine.canAcceptPacket)       // if the DCC Hardware is able to receive a new packet
 	{
 		DCCPacket p;
 
@@ -1369,9 +1369,14 @@ void DCCPacketScheduler::update(void) {
 		++packet_counter;	//to not repeat only one queue!
 		//last_packet_address = p.getAddress(); //remember the address to compare with the next packet
 		//current_packet_size = p.getBitstream(current_packet); //feed to the starting ISR.
-    dccPacketEngine.dataSize = p.getBitstream(dccPacketEngine.data); //feed to the starting ISR.
 
-    dccPacketEngine.isWaiting = false;
+    // Old code - TODO: should be removed
+    // dccPacketEngine.dataSize = p.getBitstream(dccPacketEngine.data); //feed to the starting ISR.
+    // dccPacketEngine.isWaiting = false;
+
+    uint8_t dccPacket[MaxDccSize];               // Buffer to be filled by getBitstream
+    uint8_t size = p.getBitstream(dccPacket);    // Fills the DCC packet with data and return its size
+    dccPacketEngine.send(dccPacket, size);       // Gives the DCC packet to the DCC hardware
 	}
 }
 

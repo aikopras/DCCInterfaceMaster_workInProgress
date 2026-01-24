@@ -44,9 +44,12 @@
 // - When both normal and inverted rail outputs are enabled, their toggles are
 //   executed back-to-back to minimize temporal offset and produce the cleanest
 //   zero-crossing of the H-bridge output signal.
-// - H-bridge safety requirement: both legs must never be high simultaneously
-//   to avoid shoot-through.
 //   Therefore, the toggle order within each half-bit is critical.
+//
+// NOTE: Arduino Mega 2560 shows periodic multi-microsecond DCC jitter.
+// This is caused by the millis() Timer0 ISR, which runs extra correction
+// code about every 41 ms. Other drivers, such as the DxCore driver, don't
+// have such problems, and therefore generate cleaner DCC signals.
 //
 //******************************************************************************
 #include <Arduino.h>
@@ -96,7 +99,7 @@ static DccOut_t dccRailInv;   // Create an instance for the dccRailInv
 //   - TMR_ONE()             : Load timer for "1" bit duration
 //   - TMR_ZERO()            : Load timer for "0" bit duration
 //
-// ISR macros:
+// ISR macros and inline functions:
 //   - ISR_START    : Bind the ISR to TCB1 interrupt vector
 //   - ISR_PROLOGUE : Clear the interrupt flag at the start of ISR
 //
@@ -121,7 +124,7 @@ static DccOut_t dccRailInv;   // Create an instance for the dccRailInv
 
 // We have to set the right ISR call and vector, and  clear the interrupt flag
 #define ISR_START                  ISR(TCB1_INT_vect)
-#define ISR_PROLOGUE               {TCB1.INTFLAGS = TCB_CAPT_bm; }
+inline void isrPrologue()          {TCB1.INTFLAGS = TCB_CAPT_bm; }
 
 // Enable / Disable the various channels
 #define ENABLE_DCCMON              {dccMonitor.enable = true;}
@@ -135,7 +138,7 @@ static DccOut_t dccRailInv;   // Create an instance for the dccRailInv
 // TODO: FOR TESTING
 #define DEBUG1 digitalWrite(PIN_PB3, HIGH); digitalWrite(PIN_PB3, LOW);
 #define DEBUG2 digitalWrite(PIN_PB4, HIGH); digitalWrite(PIN_PB4, LOW);
-#define DEBUG3 digitalWrite(PIN_PB5, HIGH); digitalWrite(PIN_PB5, LOW);
+#define DEBUG3 digitalWrite(PIN_PD7, HIGH); digitalWrite(PIN_PD7, LOW);
 
 
 //******************************************************************************
@@ -164,6 +167,7 @@ inline void initDccPin(DccOut_t &pinObj, uint8_t arduinoPin) {
     pinObj.outtgl = &p->OUTTGL;                   // Register to toggle output
     pinObj.bit = digitalPinToBitMask(arduinoPin); // pin bitmask
     pinObj.enable = false;                        // Toggle pin not allowed
+    *pinObj.outclr = pinObj.bit;                  // Set output pin low
   }
   else {
     pinObj.outset = nullptr;
@@ -198,12 +202,13 @@ void DccPacketEngine::setupWaveformGenerator() {
   initDccPin(dccRail, dccRailPin);
   initDccPin(dccRailInv, dccRailInvPin);
   initDccPin(dccMonitor, dccMonitorPin);
-  // DCC_USES_TCB1 - DxCore
+  // Configure TCB1 in periodic interrupt mode
   TCB1.CTRLB = TCB_CNTMODE_INT_gc;      // periodic interrupt mode
-  TCB1.CCMP  = one_count;               // start with "1" timing
+  TCB1.CCMP = one_count;                // start with a "1" bit (preamble)
   TCB1.INTFLAGS = TCB_CAPT_bm;          // clear pending interrupt flag
   TCB1.INTCTRL  = TCB_CAPT_bm;          // enable capture/timeout interrupt
-  TCB1.CTRLA = TCB_CLKSEL_CLKDIV1_gc | TCB_ENABLE_bm;   // CLK_PER, enable
+  TCB1.CTRLA = TCB_CLKSEL_CLKDIV1_gc;   // Set the prescaler to 1
+  TCB1.CNT = 0;                         // Make sure the counter is zero
   // Set the three pins to their start value
   DCC_OUT_LOW;
   DCC_OUT_INV_HGH;
@@ -212,9 +217,12 @@ void DccPacketEngine::setupWaveformGenerator() {
   dccRail.enable = true;
   dccRailInv.enable = true;
   dccMonitor.enable = true;
-
-  // Start with a DCC low-signal
-  TMR_ZERO();
+  // Reinitialise the state machine, to ensure we start in a consistent state
+  // We start in the dccPreambleStartBit. The preamble consists of 1-bits
+  // so ensure TCB1.CCMP = one_count
+  resetStateMachine();
+  // This is the moment to start the timer
+  TCB1.CTRLA |= TCB_ENABLE_bm;   // enable
 }
 
 

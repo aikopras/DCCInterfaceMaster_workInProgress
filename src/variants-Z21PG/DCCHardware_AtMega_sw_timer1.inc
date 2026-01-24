@@ -43,8 +43,6 @@
 // - When both normal and inverted rail outputs are enabled, their toggles are
 //   executed back-to-back to minimize temporal offset and produce the cleanest
 //   zero-crossing of the H-bridge output signal.
-// - H-bridge safety requirement: both legs must never be high simultaneously
-//   to avoid shoot-through.
 //   Therefore, the toggle order within each half-bit is critical.
 //
 //******************************************************************************
@@ -93,7 +91,7 @@ static DccOut_t dccRailInv;   // Create an instance for the dccRailInv
 //   - TMR_ONE()             : Load timer for "1" bit duration
 //   - TMR_ZERO()            : Load timer for "0" bit duration
 //
-// ISR macros:
+// ISR macros and inline functions:
 //   - ISR_START    : Bind the ISR to the Timer1 interrupt vector
 //   - ISR_PROLOGUE : Clear the interrupt flag at the start of ISR (not needed)
 //
@@ -118,7 +116,7 @@ static DccOut_t dccRailInv;   // Create an instance for the dccRailInv
 
 // We have to set the right ISR call and vector, and  clear the interrupt flag
 #define ISR_START                  ISR(TIMER1_COMPA_vect)
-#define ISR_PROLOGUE               {; }   // No need to clear the interrupt flag
+inline void isrPrologue() {; }     // Empty, no need to clear an interrupt flag
 
 // Enable / Disable the various channels
 #define ENABLE_DCCMON              {dccMonitor.enable = true;}
@@ -161,6 +159,7 @@ inline void initDccPin(DccOut_t &pinObj, uint8_t arduinoPin) {
     pinObj.port = portOutputRegister(port);       // Port register
     pinObj.bit = digitalPinToBitMask(arduinoPin); // pin bitmask
     pinObj.enable = false;                        // Toggle pin not allowed
+    *pinObj.port &= ~pinObj.bit;                  // Set output pin low
   }
   else {
     pinObj.port = nullptr;
@@ -196,20 +195,24 @@ void DccPacketEngine::setupWaveformGenerator() {
   initDccPin(dccMonitor, dccMonitorPin);
   // Configure Timer1 in CTC mode.
   TCCR1A = 0;                          // Normal port operation, OC1A/OC1B disconnected
-  TCCR1B = (1 << WGM12) | (1 << CS10); // CTC mode, prescaler 1
-  OCR1A = zero_count;                  // Start with "0" pulse duration
-  TCNT1 = 0;                           // Reset timer count
-  TIMSK1 = (1 << OCIE1A);              // Enable Timer1 Compare Match A interrupt
+  TCCR1B = (1 << WGM12);               // CTC mode. Do not start yet
+  OCR1A = one_count;                   // start with a "1" bit (preamble)
+  TCNT1 = 0;                           // Make sure the counter is zero
+  TIMSK1 = (1 << OCIE1A);              // Allow Timer1 Compare Match interrupt
   // Set the three pins to their start value
-  DCC_OUT_HGH;
-  DCC_OUT_INV_LOW;
-  DCC_OUT_MON_HGH;
+  DCC_OUT_LOW;
+  DCC_OUT_INV_HGH;
+  DCC_OUT_MON_LOW;
   // Enable the three output channels
   dccRail.enable = true;
   dccRailInv.enable = true;
   dccMonitor.enable = true;
-  // Start with a DCC low-signal
-  TMR_ZERO();
+  // Reinitialise the state machine, to ensure we start in a consistent state
+  // We start in the dccPreambleStartBit. The preamble consists of 1-bits
+  // so ensure OCR1A = one_count
+  resetStateMachine();
+  // This is the moment to start the timer
+  TCCR1B |= (1 << CS10);   // Timer starts (prescaler = 1)
 }
 
 //******************************************************************************

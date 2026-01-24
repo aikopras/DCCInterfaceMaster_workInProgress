@@ -80,6 +80,8 @@
  * - add function bit control from F29...F32767
  * - add function setExtAccessoryPos
  * - add timing to ACK detection
+ * - change code to work with new DCCHardware.h class interface
+ * - add accessory and slot settings for STM32 and DxCore. #def.ines rewritten
  */
 
 #ifndef __DCCCOMMANDSTATION_H__
@@ -90,14 +92,14 @@
 /*******************************************************************/
 //#define PROG_DEBUG	//Serial output of Prog Informaton
 
-#if defined(ESP8266) //ESP8266 or WeMos D1 mini
-#define ACK_SENCE_VALUE 4		//WeMos has a voltage divider for 3.1 Volt -> we not want to modify the board!
+#if defined(ESP8266) // ESP8266 or WeMos D1 mini
+#define ACK_SENSE_VALUE 4		//WeMos has a voltage divider for 3.1 Volt -> we not want to modify the board!
 #else
-#define ACK_SENCE_VALUE 30 		//value difference
+#define ACK_SENSE_VALUE 30 		//value difference
 #endif
 
-#define	ACK_SENCE_MIN 3			//min ACK length in ms
-#define ACK_SENCE_MAX 14 		//max ACK length in ms
+#define	ACK_SENSE_MIN 3			//min ACK length in ms
+#define ACK_SENSE_MAX 14 		//max ACK length in ms
 
 //read value again if verify fails:
 #define CV_BIT_MAX_TRY_READ 	4	//times to try in Bit-Mode
@@ -111,44 +113,40 @@
 #define EXTENDFUNCTION		//activate functions over F28
 
 /*******************************************************************/
-//Protokoll can handel max 16384 switch (Weichenzust�nde max 16384):
-#if defined(__SAM3X8E__)
-// Arduino Due Board follows
-#define AccessoryMax 4096	//max DCC 2048 Weichen / 8 = 255 byte
-#define SlotMax 255			//Slots f�r Lokdaten
-#define PERIODIC_REFRESH_QUEUE_SIZE 255
-
-#elif defined(ESP8266) || defined(ESP32) //ESP8266 or WeMos D1 mini
-// Arduino ESP8266 Board follows
-#define AccessoryMax 4096	//max DCC 2048 Weichen / 8 = 255 byte
-#define SlotMax 255			//Slots f�r Lokdaten
-#define PERIODIC_REFRESH_QUEUE_SIZE 255
-
+//Protocol can handle max 16384 switch (Weichenzustande: max 16384)
+#if defined(ARDUINO_ARCH_ESP32)  || \
+    defined(ARDUINO_ARCH_ESP8266)|| \
+    defined(ARDUINO_ARCH_STM32)  || \
+    defined(ARDUINO_ARCH_RP2040) || \
+    defined(ARDUINO_ARCH_SAM)    || \
+    defined(ARDUINO_ARCH_MBED)   || \
+    defined(__AVR_DA__) || defined(__AVR_DB__) || defined(__AVR_DD__)
+    #define AccessoryMax 4096
+    #define SlotMax 255
+    #define PERIODIC_REFRESH_QUEUE_SIZE 255
 #elif defined(__AVR_ATmega1284P__)
-//more then 8 KB RAM
-#define AccessoryMax 2048	//max DCC 2048 Weichen / 8 = 255 byte
-#define SlotMax 255			//Slots f�r Lokdaten
-#define PERIODIC_REFRESH_QUEUE_SIZE 200
-
+  //more then 8 KB RAM
+  #define AccessoryMax 2048	            //max DCC 2048 Weichen / 8 = 255 byte
+  #define SlotMax 255			              //Slots fuer Lokdaten
+  #define PERIODIC_REFRESH_QUEUE_SIZE 200
 #elif defined(__AVR_ATmega1280__) || defined(__AVR_ATmega2560__)
-//8 KB RAM
-#define AccessoryMax 1024	//max DCC 2048 Weichen / 8 = 255 byte
-#define SlotMax 80			//Slots f�r Lokdaten
-#define PERIODIC_REFRESH_QUEUE_SIZE 100
-//#define GLOBALRAILCOMREADER	//Activate Global RailCom Reading in CutOut over Serial3 - now in external Code???
-
+  //8 KB RAM
+  #define AccessoryMax 1024
+  #define SlotMax 80
+  #define PERIODIC_REFRESH_QUEUE_SIZE 100
 #elif defined (__AVR_ATmega644P__)
-//4 KB RAM
-#define AccessoryMax 512	//normal 512 Weichen / 8 = 64 byte
-#define SlotMax 36			//Slots f�r Lokdaten
-#define PERIODIC_REFRESH_QUEUE_SIZE 70
-
+  //4 KB RAM
+  #define AccessoryMax 512	            //normal 512 Weichen / 8 = 64 byte
+  #define SlotMax 36
+  #define PERIODIC_REFRESH_QUEUE_SIZE 70
 #else
-//less then 2,5 KB RAM
-#define AccessoryMax 128		//64 Weichen / 8 = 8 byte
-#define SlotMax 15			//Slots f�r Lokdaten
-#define PERIODIC_REFRESH_QUEUE_SIZE 60
+  //less then 2,5 KB RAM
+  #define AccessoryMax 128		          // 64 Weichen / 8 = 8 byte
+  #define SlotMax 15
+  #define PERIODIC_REFRESH_QUEUE_SIZE 60
 #endif
+
+
 /*******************************************************************/
 
 #define MaxDccSize 6            // DCC messages can have a length upto this value
@@ -361,7 +359,7 @@ extern "C" {
 
 	extern void notifyRailpower(uint8_t state) __attribute__((weak));
 
-	extern uint16_t notifyCurrentSence(void) __attribute__((weak));	 //request the CurrentSence value
+	extern uint16_t notifyCurrentSense(void) __attribute__((weak));	 //request the CurrentSense value
 
 	extern void notifyCVNack(uint16_t CV) __attribute__((weak));	//no ACK while programming
 

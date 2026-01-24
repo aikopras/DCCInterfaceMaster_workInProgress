@@ -100,27 +100,58 @@ typedef enum  {
 
 // Define the structure for all variables used by the ISR
 struct DCC_ISR_State {
-  volatile DCC_output_state_t state = dccPreambleStartBit; // Initial state of the ISR state machine
-  volatile uint8_t bitsRemaining = PREAMBLE_LENGTH;        // Bits remaining in current phase (preamble or data byte)
-  volatile uint8_t bytesRemainingInPacket = 0;             // How many bytes left to send
-  volatile uint8_t nextPacket[MaxDccSize] = {};            // Next packet waiting to be sent
-  volatile uint8_t nextPacketSize = 0;                     // Number of bytes in next packet
-  volatile uint8_t currentPacket[MaxDccSize] = {};         // Current packet being sent
-  volatile uint8_t currentPacketSize = 0;                  // Number of bytes in current packet
-  volatile uint8_t defaultPacket[3] = {0xFF, 0, 0xFF};     // Pre-generated default IDLE packet (Reset for SM)
-  volatile uint8_t defaultPacketSize = 3;                  // Always 3 bytes
-  volatile bool firstHalfBit = true;	                     // The ISR starts with the first DCC Halfbit
-  volatile bool firstHalfBitRC = true;	                   // And the first part of the Railcom start bit
-  volatile bool smEnabled = false;                         // SM active (long preamble, resets, SM flow allowed)
-  volatile bool packetIsSmPacket = false;                  // We have to send Service Mode Packets
-  volatile uint8_t smRepeatsRemaining = 0;                 // Number of retransmissions left for this SM packet
-  volatile uint8_t smMaxRepeats = 10;	                     // Number of SM retransmissions after first send
-  volatile bool railComGapFlag = false;	                   // In the gap, this flag is guaranteed to be true
-  volatile bool railCom = true;                            // Should we generate a RailCom gap?
-  volatile bool railPower = false;	                       // Controls if the railsignal is on/off
+  volatile DCC_output_state_t state;             // Initial state of the ISR state machine
+  volatile uint8_t bitsRemaining;                // Bits remaining in current phase (preamble or data byte)
+  volatile uint8_t bytesRemainingInPacket;       // How many bytes left to send
+  volatile uint8_t nextPacket[MaxDccSize];       // Next packet waiting to be sent
+  volatile uint8_t nextPacketSize;               // Number of bytes in next packet
+  volatile uint8_t currentPacket[MaxDccSize];    // Current packet being sent
+  volatile uint8_t currentPacketSize;            // Number of bytes in current packet
+  volatile uint8_t defaultPacket[3];             // Pre-generated default IDLE packet (Reset for SM)
+  volatile uint8_t defaultPacketSize;            // Always 3 bytes
+  volatile bool firstHalfBit;	                   // The ISR starts with the first DCC Halfbit
+  volatile bool firstHalfBitRC;	                 // And the first part of the Railcom start bit
+  volatile bool smEnabled;                       // SM active (long preamble, resets, SM flow allowed)
+  volatile bool packetIsSmPacket;                // We have to send Service Mode Packets
+  volatile uint8_t smRepeatsRemaining;           // Number of retransmissions left for this SM packet
+  volatile uint8_t smMaxRepeats;	               // Number of SM retransmissions after first send
+  volatile bool railComGapFlag;	                 // In the gap, this flag is guaranteed to be true
+  volatile bool railCom;                         // Should we generate a RailCom gap?
+  volatile bool railPower;	                     // Controls if the railsignal is on/off
 };
 
-static DCC_ISR_State dccISR;                              // Create an instance of the struct for the ISR
+static DCC_ISR_State dccISR;                     // Create an instance of the struct for the ISR
+
+void initIsr() {
+  // Note that we do not (re)set railCom and railPower,
+  // since the user may already have set these values.
+  dccISR.state = dccPreambleStartBit;            // We start in the dccPreambleStartBit state
+  dccISR.bitsRemaining = PREAMBLE_LENGTH;        // With a normal preamble (this SM is false)
+  dccISR.bytesRemainingInPacket = 0;             // We start with an empty packet
+  dccISR.firstHalfBit = true;	                   // We must start with the first DCC Halfbit
+  dccISR.firstHalfBitRC = true;	                 // And the first part of the Railcom start bit
+  // Service Mode settings
+  dccISR.smEnabled = false;
+  dccISR.packetIsSmPacket = false;
+  dccISR.smRepeatsRemaining = 0;
+  dccISR.smMaxRepeats = 10;
+  // RailCom settings
+  dccISR.railComGapFlag = false;
+  // Packet initialisation
+  for (uint8_t i = 0; i < MaxDccSize; ++i) dccISR.currentPacket[i] = 0;
+  dccISR.currentPacketSize = 0;
+  for (uint8_t i = 0; i < MaxDccSize; ++i) dccISR.nextPacket[i] = 0;
+  dccISR.nextPacketSize = 0;
+  dccISR.defaultPacket[0] = 0xFF;
+  dccISR.defaultPacket[1] = 0x00;
+  dccISR.defaultPacket[2] = 0xFF;
+  dccISR.defaultPacketSize = 3;
+}
+
+void DccPacketEngine::resetStateMachine() {
+  initIsr();
+}
+
 
 //******************************************************************************
 // 4. Packet send interface method
@@ -254,9 +285,8 @@ void DccPacketEngine::RunOutputSignal() {
 // Thus every 100us (0-bit), 58us (1-bit or 29us (RailCom start bit)
 
 ISR_START {
-//  digitalWriteFast(PIN_PD6,HIGH);
 
-  ISR_PROLOGUE;                  // Processor specific code may be here
+  isrPrologue();                 // Processor specific code may be here
   uint8_t mask;                  // helper to determine which bit we are
   //
   // ===========================================================================
@@ -445,8 +475,5 @@ ISR_START {
 
   // Next ISR we will take the other halfbit
   dccISR.firstHalfBit = !dccISR.firstHalfBit;
-
-//  digitalWriteFast(PIN_PD6,LOW);
-
 
 }; // End ISR
