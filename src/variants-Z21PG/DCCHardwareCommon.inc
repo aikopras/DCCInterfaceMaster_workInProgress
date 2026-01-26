@@ -286,7 +286,7 @@ void DccPacketEngine::RunOutputSignal() {
 
 ISR_START {
 
-  isrPrologue();                 // Processor specific code may be here
+  ISR_PROLOGUE;                 // Processor specific code may be here
   uint8_t mask;                  // helper to determine which bit we are
   //
   // ===========================================================================
@@ -475,5 +475,7 @@ ISR_START {
 
   // Next ISR we will take the other halfbit
   dccISR.firstHalfBit = !dccISR.firstHalfBit;
+
+  ISR_EPILOGUE;                 // Processor specific code may be here
 
 }; // End ISR

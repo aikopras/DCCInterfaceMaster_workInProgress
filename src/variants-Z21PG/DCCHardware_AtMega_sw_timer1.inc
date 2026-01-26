@@ -116,7 +116,8 @@ static DccOut_t dccRailInv;   // Create an instance for the dccRailInv
 
 // We have to set the right ISR call and vector, and  clear the interrupt flag
 #define ISR_START                  ISR(TIMER1_COMPA_vect)
-inline void isrPrologue() {; }     // Empty, no need to clear an interrupt flag
+#define ISR_PROLOGUE {; }          // Empty, no need to do anything
+#define ISR_EPILOGUE {; }          // Empty, no need to do anything
 
 // Enable / Disable the various channels
 #define ENABLE_DCCMON              {dccMonitor.enable = true;}

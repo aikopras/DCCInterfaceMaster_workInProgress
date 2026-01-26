@@ -123,8 +123,9 @@ static DccOut_t dccRailInv;   // Create an instance for the dccRailInv
 #define TMR_ZERO()                 { TCB1.CCMP = zero_count; }
 
 // We have to set the right ISR call and vector, and  clear the interrupt flag
-#define ISR_START                  ISR(TCB1_INT_vect)
-inline void isrPrologue()          {TCB1.INTFLAGS = TCB_CAPT_bm; }
+#define ISR_START    ISR(TCB1_INT_vect)
+#define ISR_PROLOGUE {TCB1.INTFLAGS = TCB_CAPT_bm; } // Clear the interrupt flag
+#define ISR_EPILOGUE {; }                            // Empty, nothing to do
 
 // Enable / Disable the various channels
 #define ENABLE_DCCMON              {dccMonitor.enable = true;}
