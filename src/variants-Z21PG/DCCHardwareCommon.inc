@@ -152,13 +152,46 @@ void DccPacketEngine::resetStateMachine() {
   initIsr();
 }
 
+//******************************************************************************
+// 4. Setup the Interrupt timer and configure the output pins
+//******************************************************************************
+void DccPacketEngine::setupWaveformGenerator() {
+  // Step 1: stop de DCC Interrupt timer
+  // Prevents the ISR from running during hardware reconfiguration.
+  disableDccTimer();
+  // Step 2: Maps DCC output signals to MCU port registers and bitmasks.
+  // Unused pins (0xFF) are explicitly disabled to prevent ISR pin access.
+  initDccPin(dccRail, dccRailPin);
+  initDccPin(dccRailInv, dccRailInvPin);
+  initDccPin(dccMonitor, dccMonitorPin);
+  // Step 3: Configure the DCC timer. This prepares the timer registers and
+  // interrupt source, but does not yet start the timer / DCC signal generation.
+  enableDccTimer();
+  // Step 4: Force all DCC output pins into a known safe initial state.
+  // Normal rail starts LOW, inverted rail HIGH (complementary),
+  // monitor output LOW. No toggling is allowed yet.
+  DCCOUT_LOW;
+  DCCINV_HGH;
+  DCCMON_LOW;
+  // Step 5: Enable toggling of the DCC output channels.  From this point on,
+  // the ISR is allowed to toggle these pins according to the DCC state machine.
+  ENABLE_DCCOUT;
+  ENABLE_DCCINV;
+  ENABLE_DCCMON;
+  // Step 6: Reinitialise the DCC state machine.
+  // This resets all ISR state so the first interrupt starts in a
+  // well-defined condition (dccPreambleStartBit with a '1'-bit preamble).
+  resetStateMachine();
+  // Step 7: Start the DCC timer and enable interrupt-driven waveform generation.
+  // From this point on, the ISR takes full control of timing and pin toggling.
+  startDccTimer();
+}
 
 //******************************************************************************
-// 4. Packet send interface method
+// 5. Packet send interface method
 //******************************************************************************
 void DccPacketEngine::send(const uint8_t* data, uint8_t size) {
   if (size == 0 || size > MaxDccSize) return;   // Illegal packet size
-
   // Check if this is a SM packet
   // RCN-216: Service Mode packets have 0111xxxx as first byte
   dccISR.packetIsSmPacket = (data[0] & 0xF0) == 0b01110000;
@@ -171,7 +204,7 @@ void DccPacketEngine::send(const uint8_t* data, uint8_t size) {
 }
 
 //******************************************************************************
-// 5. Service Mode interface methods
+// 6. Service Mode interface methods
 //******************************************************************************
 void DccPacketEngine::enterServiceMode(void) {
   // Enable Service Mode behaviour (long preamble, reset packets, SM flow).
@@ -224,7 +257,7 @@ void DccPacketEngine::stopServiceModeRepeats(void) {
 
 
 //******************************************************************************
-// 6. RailCom interface methods
+// 7. RailCom interface methods
 //******************************************************************************
 void DccPacketEngine::setRailCom(bool active) { // Enable / disable generation of the RailCom gap
   dccISR.railCom = active;
@@ -250,7 +283,7 @@ bool DccPacketEngine::railComGap(void) {
 
 
 //******************************************************************************
-// 7. Start / Stop interface methods
+// 8. Start / Stop interface methods
 //******************************************************************************
 void DccPacketEngine::StopOutputSignal() {
   // This routine may be called when a short circuit is detected or when the user
@@ -259,8 +292,8 @@ void DccPacketEngine::StopOutputSignal() {
   // the rails. The monitor output is not disabled, allowing switches and other
   // accessories to remain operational.
   noInterrupts();
-  DCC_OUT_LOW;
-  DCC_OUT_INV_LOW;
+  DCCOUT_LOW;
+  DCCINV_LOW;
   DISABLE_DCCOUT;
   DISABLE_DCCINV;
 	dccISR.railPower = false;
@@ -274,6 +307,47 @@ void DccPacketEngine::RunOutputSignal() {
   // during the first half-bit the inverted signal is allowed to toggle again,
   // and during the second half-bit the normal signal is re-enabled.
 	dccISR.railPower = true;
+}
+
+//******************************************************************************
+// 9. Inline functions for bit toggle
+//******************************************************************************
+// First half-bit toggle
+// During the first half-bit, the normal rail output starts LOW and the
+// inverted rail output starts HIGH. To maintain proper H-bridge operation
+// and clean zero-crossing:
+//   - When both rails are enabled, the inverted rail is toggled first,
+//     immediately followed by the normal rail.
+//   - The monitor output is toggled if enabled.
+// This order is critical to avoid shoot-through.
+inline void dccFirstHalfBitToggle(void) {
+  if (DCCOUT_IS_ENABLED && DCCINV_IS_ENABLED) {
+    DCCINV_TGL;
+    DCCOUT_TGL;
+  } else {
+    if (DCCINV_IS_ENABLED) DCCINV_TGL;
+    if (DCCOUT_IS_ENABLED) DCCOUT_TGL;
+    }
+  if (DCCMON_IS_ENABLED) DCCMON_TGL;
+}
+
+// Second half-bit toggle
+// During the second half-bit, the normal rail output starts HIGH and the
+// inverted rail output starts LOW.
+// To maintain proper H-bridge operation and clean zero-crossing:
+//   - When both rails are enabled, the normal rail is toggled first,
+//     immediately followed by the inverted rail.
+//   - The monitor output is toggled if enabled.
+// This order is critical to avoid shoot-through.
+inline void dccSecondHalfBitToggle(void) {
+  if (DCCOUT_IS_ENABLED && DCCINV_IS_ENABLED) {
+    DCCOUT_TGL;
+    DCCINV_TGL;
+  } else {
+    if (DCCOUT_IS_ENABLED) DCCOUT_TGL;;
+    if (DCCINV_IS_ENABLED) DCCINV_TGL;
+    }
+  if (DCCMON_IS_ENABLED) DCCMON_TGL;
 }
 
 
@@ -306,7 +380,7 @@ ISR_START {
 
       case dccRailComStartBit:
         if (dccISR.firstHalfBitRC) {        // Is this the first part of the RailCom halfbit?
-          TMR_RAILCOM_STARTBIT();           // Set the timer, to trigger after 29us
+          TMR_RAILCOM_STARTBIT;             // Set the timer, to trigger after 29us
           DISABLE_DCCINV;                   // The Inverse pin will not toggle during the RC gap
           DISABLE_DCCMON;                   // The Monitor pin will skip the toggle after 29us
           dccISR.railComGapFlag = true;     // The RailCom gap just started
@@ -343,7 +417,7 @@ ISR_START {
       // About to send a data byte, but have to preceed the data with a '0' (start bit).
       // Send that '0', then move to dccData
       case dccStartBitPacket:
-        TMR_ZERO();
+        TMR_ZERO;
         // We can proces a new packet provided we don't have to repeat earlier SM packets
         if (!dccPacketEngine.isServiceModeRepeating()) {
           // Did the application code already gave us a new packet?
@@ -371,19 +445,19 @@ ISR_START {
       break;
 
       case dccStartBitData:
-        TMR_ZERO();             // The bit between Data bytes should always be 0
+        TMR_ZERO;             // The bit between Data bytes should always be 0
       break;
 
       case dccData:
         mask = 1 << (dccISR.bitsRemaining - 1);
         // Determine if we have to send a 0 or a 1
         if (dccISR.currentPacket[dccISR.currentPacketSize - dccISR.bytesRemainingInPacket] & mask)
-          TMR_ONE()
-          else TMR_ZERO();
+          TMR_ONE
+          else TMR_ZERO;
       break;
 
       case dccEndBit:
-        TMR_ONE();             // The DCC end bit should always be 1
+        TMR_ONE;             // The DCC end bit should always be 1
       break;
 
     } // END SWITCH CASE
@@ -405,7 +479,7 @@ ISR_START {
     switch (dccISR.state) {
 
       case dccRailComStartBit:
-        TMR_ONE();
+        TMR_ONE;
         dccISR.bitsRemaining--;
         dccISR.state = dccRailComGap;
       break;
