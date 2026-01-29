@@ -74,12 +74,8 @@
 //******************************************************************************
 #include <Arduino.h>
 #include "esp32-hal-timer.h"
-
-#include <driver/gpio.h>
 #include "soc/gpio_struct.h"    // <-- Voor GPIO.out_w1ts etc.
-
 #include "../DCCHardware.h"
-
 
 
 //******************************************************************************
