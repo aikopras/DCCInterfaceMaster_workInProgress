@@ -13,11 +13,13 @@
 
   #if defined(AVR_DXCORE)
     // DxCore, all versions
-    #include "variants-Z21PG/DCCHardware_dxcore_sw_tcb1.inc"            // TCB1 and software pin toggle
+    #include "variants-Z21PG/DCCHardware_dxcore_sw_tcb1.inc"     // TCB1 and software pin toggle
+  #elif defined(ESP32)
+    #include "variants-Z21PG/DCCHardware_ESP32_sw_hw_timer_t.inc"   // GPTimer & GPIO
   #else
     // Other AVR (mega2560 etc.)
-    #include "variants-Z21PG/DCCHardware_atmega_sw_timer1.inc"          // Timer1 and software pin toggle
-    //#include "variants-Z21PG/DCCHardware_legacy.inc"                  // This is close to the original driver
+    #include "variants-Z21PG/DCCHardware_atmega_sw_timer1.inc"   // Timer1 and software pin toggle
+    //#include "variants-Z21PG/DCCHardware_legacy.inc"           // This is close to the original driver
   #endif
 
 #elif defined(AVR_DXCORE)

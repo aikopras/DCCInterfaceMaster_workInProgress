@@ -42,6 +42,14 @@
 // complementary rail outputs, and a clean split between physical signal generation
 // and protocol flow.
 //
+// Toggling strategy and H-bridge safety:
+// - All rail transitions use toggles rather than set/clear to maintain
+//   consistent behavior between software- and hardware-generated approaches.
+// - When both normal and inverted rail outputs are enabled, their toggles are
+//   executed back-to-back to minimize temporal offset and produce the cleanest
+//   zero-crossing of the H-bridge output signal.
+//   Therefore, the toggle order within each half-bit is critical.
+//
 // Service Mode packet retransmissions are handled inside the ISR rather than in the
 // scheduler. This ensures that repeats are tightly coupled to the actual transmission
 // flow and allows higher software layers to detect acknowledgements reliably, without
@@ -344,7 +352,7 @@ inline void dccSecondHalfBitToggle(void) {
     DCCOUT_TGL;
     DCCINV_TGL;
   } else {
-    if (DCCOUT_IS_ENABLED) DCCOUT_TGL;;
+    if (DCCOUT_IS_ENABLED) DCCOUT_TGL;
     if (DCCINV_IS_ENABLED) DCCINV_TGL;
     }
   if (DCCMON_IS_ENABLED) DCCMON_TGL;
@@ -440,7 +448,8 @@ ISR_START {
           dccPacketEngine.canAcceptPacket = true; // ready for next packet
         } else {
           // still repeating SM packet, decrement counter
-          if (dccISR.smRepeatsRemaining > 0) dccISR.smRepeatsRemaining--;
+          if (dccISR.smRepeatsRemaining > 0)
+            dccISR.smRepeatsRemaining = dccISR.smRepeatsRemaining - 1;
         }
       break;
 
@@ -452,7 +461,7 @@ ISR_START {
         mask = 1 << (dccISR.bitsRemaining - 1);
         // Determine if we have to send a 0 or a 1
         if (dccISR.currentPacket[dccISR.currentPacketSize - dccISR.bytesRemainingInPacket] & mask)
-          TMR_ONE
+          TMR_ONE;
           else TMR_ZERO;
       break;
 
@@ -480,12 +489,12 @@ ISR_START {
 
       case dccRailComStartBit:
         TMR_ONE;
-        dccISR.bitsRemaining--;
+        dccISR.bitsRemaining = dccISR.bitsRemaining - 1;
         dccISR.state = dccRailComGap;
       break;
 
       case dccRailComGap:
-        dccISR.bitsRemaining--;
+        dccISR.bitsRemaining = dccISR.bitsRemaining - 1;
         if (dccISR.bitsRemaining == 0) {      // Last half of last RailCom Gap bit
           if (dccISR.railPower)               // Only if the rails may be powered
             ENABLE_DCCOUT;                    // The normal pin is allowed to toggle again
@@ -495,12 +504,12 @@ ISR_START {
       break;
 
       case dccPreambleStartBit:
-        dccISR.bitsRemaining--;
+        dccISR.bitsRemaining = dccISR.bitsRemaining - 1;
         dccISR.state = dccPreamble;
       break;
 
       case dccPreamble:
-        dccISR.bitsRemaining--;
+        dccISR.bitsRemaining = dccISR.bitsRemaining - 1;
         if (dccISR.bitsRemaining == 0) dccISR.state = dccStartBitPacket;
       break;
 
@@ -512,16 +521,17 @@ ISR_START {
 
       case dccStartBitData:
         dccISR.state = dccData;
-        dccISR.bitsRemaining = 8;	                 // Reset the counter for bit sending
+        dccISR.bitsRemaining = 8;	                       // Reset the counter for bit sending
       break;
 
       case dccData:
-        dccISR.bitsRemaining--;                    // One bit less to go for this byte
-        if(dccISR.bitsRemaining == 0) {            // No more bits for this byte?
-          dccISR.bytesRemainingInPacket--;         // One byte less for this packet
-          if(dccISR.bytesRemainingInPacket == 0)   // No more bytes to go for this packet?
-            dccISR.state = dccEndBit;              // Ready for this packet
-          else dccISR.state = dccStartBitData;     // This packet has still bytes left
+        dccISR.bitsRemaining = dccISR.bitsRemaining - 1; // One bit less to go for this byte
+        if(dccISR.bitsRemaining == 0) {                  // No more bits for this byte?
+          // One byte less for this packet
+          dccISR.bytesRemainingInPacket = dccISR.bytesRemainingInPacket - 1;
+          if(dccISR.bytesRemainingInPacket == 0)         // No more bytes to go for this packet?
+            dccISR.state = dccEndBit;                    // Ready for this packet
+          else dccISR.state = dccStartBitData;           // This packet has still bytes left
         };
       break;
 

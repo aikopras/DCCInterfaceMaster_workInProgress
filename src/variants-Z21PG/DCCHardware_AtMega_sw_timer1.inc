@@ -37,14 +37,7 @@
 // small structure, holding the port register pointer and pin bitmask.
 // This ensures deterministic timing.
 //
-// Toggling strategy and H-bridge safety:
-// - All rail transitions use toggles rather than set/clear to maintain
-//   consistent behavior between software- and hardware-generated approaches.
-// - When both normal and inverted rail outputs are enabled, their toggles are
-//   executed back-to-back to minimize temporal offset and produce the cleanest
-//   zero-crossing of the H-bridge output signal.
-//   Therefore, the toggle order within each half-bit is critical.
-//
+//******************************************************************************
 // Each variant file should provide the following macros (#defines) to
 // implement hardware-specific code for this variant.
 // These macros simplify ISR and setup code, providing clear and consistent

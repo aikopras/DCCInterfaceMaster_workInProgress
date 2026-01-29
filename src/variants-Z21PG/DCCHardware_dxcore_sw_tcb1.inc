@@ -1,5 +1,4 @@
 //******************************************************************************
-
 //
 // File:            DCCHardware_dxcore_sw_tcb1.inc
 // Purpose:         DCC Waveform Generator for DxCore processors (bit-banging)
@@ -38,19 +37,12 @@
 // by a small structure containing the port registers and bitmask. Output
 // transitions are triggered explicitly in the ISR for deterministic timing.
 //
-// Toggling strategy and H-bridge safety:
-// - All rail transitions use toggles rather than set/clear to maintain
-//   consistent behavior between software- and hardware-generated approaches.
-// - When both normal and inverted rail outputs are enabled, their toggles are
-//   executed back-to-back to minimize temporal offset and produce the cleanest
-//   zero-crossing of the H-bridge output signal.
-//   Therefore, the toggle order within each half-bit is critical.
-//
 // NOTE: Arduino Mega 2560 shows periodic multi-microsecond DCC jitter.
 // This is caused by the millis() Timer0 ISR, which runs extra correction
 // code about every 41 ms. Other drivers, such as the DxCore driver, don't
 // have such problems, and therefore generate cleaner DCC signals.
 //
+//******************************************************************************
 // Each variant file should provide the following macros (#defines) to
 // implement hardware-specific code for this variant.
 // These macros simplify ISR and setup code, providing clear and consistent
