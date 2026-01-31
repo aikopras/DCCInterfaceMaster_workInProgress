@@ -1,6 +1,9 @@
 #include <Arduino.h>
 
 #define Z21PG
+#include <Arduino.h>
+
+#define Z21PG
 
 // Create a define for all DxCore variants, to improve readability
 #if defined(__AVR_DA__) || defined(__AVR_DB__) || defined(__AVR_DD__) || \
@@ -11,19 +14,32 @@
 
 #if defined(Z21PG)
 
+  // ---------------- AVR DxCore ----------------
   #if defined(AVR_DXCORE)
-    // DxCore, all versions
-    #include "variants-Z21PG/DCCHardware_dxcore_sw_tcb1.inc"     // TCB1 and software pin toggle
-  #elif defined(ESP32)
-    #include "variants-Z21PG/DCCHardware_ESP32_sw_hw_timer_t.inc"   // GPTimer & GPIO
+    #include "variants-Z21PG/DCCHardware_dxcore_sw_tcb1.inc"
+
+  // ---------------- ESP32 (all) ----------------
+  #elif defined(ARDUINO_ARCH_ESP32)
+
+    // ---- ESP32-C series (RISC-V) ----
+    #if defined(CONFIG_IDF_TARGET_ESP32C3) || \
+        defined(CONFIG_IDF_TARGET_ESP32C5) || \
+        defined(CONFIG_IDF_TARGET_ESP32C6)
+
+      #include "variants-Z21PG/DCCHardware_ESP32C.inc"
+
+    // ---- ESP32-S series (Xtensa: ESP32 / S2 / S3) ----
+    #else
+      #include "variants-Z21PG/DCCHardware_ESP32S.inc"
+    #endif
+
+  // ---------------- Other AVR ----------------
   #else
-    // Other AVR (mega2560 etc.)
-    #include "variants-Z21PG/DCCHardware_atmega_sw_timer1.inc"   // Timer1 and software pin toggle
-    //#include "variants-Z21PG/DCCHardware_legacy.inc"           // This is close to the original driver
+    #include "variants-Z21PG/DCCHardware_atmega_sw_timer1.inc"
   #endif
 
-#elif defined(AVR_DXCORE)
-  // DxCore, all versions (non-Z21PG)
-  #include "variants-HQ/DCCHardware_dxcore_hw_tca0.inc"
 
+// ================= Non-Z21PG =================
+#elif defined(AVR_DXCORE)
+  #include "variants-HQ/DCCHardware_dxcore_hw_tca0.inc"
 #endif

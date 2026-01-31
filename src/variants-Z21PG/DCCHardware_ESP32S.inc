@@ -1,9 +1,9 @@
 //******************************************************************************
 //
-// File:            DCCHardware_ESP32_sw_hw_timer_t.inc
-// Purpose:         DCC Waveform Generator for ESP32  processors (bit-banging)
+// File:            DCCHardware_ESP32S.inc
+// Purpose:         DCC Waveform Generator for ESP32-S (Xtensa) processors (bit-banging)
 // Copyright 2026:  Aiko Pras
-// History:         2026-01-29 / Aiko Pras - First version
+// History:         2026-01-31 / Aiko Pras - First version
 //
 //
 // Historical credits:
@@ -22,8 +22,9 @@
 //     * Added support for service mode, RailCom cutouts and 3 DCC output pins
 //
 // Hardware layer overview:
-// This file implements the ESP32-specific hardware abstraction layer for
-// software-based DCC waveform generation using hw_timer_t.
+// This file implements the ESP32-S series (Xtensa: ESP32 / S2 / S3) specific
+// hardware abstraction layer for software-based DCC waveform generation
+// using hw_timer_t.
 //
 // It connects the processor-independent DCC state machine
 // (DCCHardwareCommon.inc) to the ESP32 hardware by providing:
