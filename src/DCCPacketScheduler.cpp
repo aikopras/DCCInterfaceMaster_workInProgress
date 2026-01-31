@@ -202,7 +202,7 @@ bool DCCPacketScheduler::getrailcom(void)
 }
 
 //---------------------------------------------------------------------------------
-bool DCCPacketScheduler::setSpeed(uint16_t address, uint8_t speed)
+/*bool DCCPacketScheduler::setSpeed(uint16_t address, uint8_t speed)
 {
 	//set Loco to speed with default settings!
   switch(DCCdefaultSteps)
@@ -212,6 +212,22 @@ bool DCCPacketScheduler::setSpeed(uint16_t address, uint8_t speed)
     case 28:
       return(setSpeed28(address, speed));
     case 128:
+      return(setSpeed128(address, speed));
+  }
+  return false; //invalid number of steps specified.
+}
+*/
+ // 2026/01/31 AP
+bool DCCPacketScheduler::setSpeed(uint16_t address, uint8_t speed)
+{
+	//set Loco to speed with default settings!
+  switch(DCCdefaultSteps)
+  {
+    case DCC14:
+      return(setSpeed14(address, speed));
+    case DCC28:
+      return(setSpeed28(address, speed));
+    case DCC128:
       return(setSpeed128(address, speed));
   }
   return false; //invalid number of steps specified.

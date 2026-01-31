@@ -97,10 +97,13 @@ static DccOut_t dccMonitor;   // Create an instance for the dccMonitor
 static DccOut_t dccRail;      // Create an instance for the dccRail
 static DccOut_t dccRailInv;   // Create an instance for the dccRailInv
 
+// Create a dummy pointer address, to avoid problems with null pointers
+static volatile uint32_t gpio_dummy;
+
 inline void initDccPin(DccOut_t &pinObj, uint8_t arduinoPin) {
   if (arduinoPin != 0xFF) {
     pinMode(arduinoPin, OUTPUT);
-    uint8_t gpio = arduinoPin;  // Gebruik gewoon de Arduino pin
+    uint8_t gpio = arduinoPin;            // Simply use the Arduino pin
     pinObj.enable = false;
     if (gpio < 32) {
       pinObj.bit    = (1UL << gpio);
@@ -117,9 +120,9 @@ inline void initDccPin(DccOut_t &pinObj, uint8_t arduinoPin) {
     }
   }
   else {
-    pinObj.outset = nullptr;
-    pinObj.outclr = nullptr;
-    pinObj.outtgl = nullptr;
+    pinObj.outset = &gpio_dummy;
+    pinObj.outclr = &gpio_dummy;
+    pinObj.outtgl = &gpio_dummy;
     pinObj.bit    = 0;
     pinObj.enable = false;
   }
@@ -136,6 +139,7 @@ inline void initDccPin(DccOut_t &pinObj, uint8_t arduinoPin) {
 #define DCCMON_HGH          {*dccMonitor.outset = dccMonitor.bit;}
 #define DCCMON_LOW          {*dccMonitor.outclr = dccMonitor.bit;}
 #define DCCMON_TGL          {*dccMonitor.outtgl ^= dccMonitor.bit;}
+
 
 // defines to enable / disable the output signals
 #define ENABLE_DCCMON       {dccMonitor.enable = true;}
@@ -167,16 +171,16 @@ void dccTimerIsr();
 #define one_count       58           // RCN 210
 #define zero_count      100          // RCN 210
 
-// Load timer for specific DCC timings (µs resolution)
-#define TMR_ONE                timerWrite(dccTimer, one_count)
-#define TMR_ZERO               timerWrite(dccTimer, zero_count)
-#define TMR_RAILCOM_STARTBIT   timerWrite(dccTimer, half_one_count)
+// Set the timer alarms for specific DCC timings (µs resolution)
+#define TMR_ONE                timerAlarm(dccTimer, one_count, true, 0)
+#define TMR_ZERO               timerAlarm(dccTimer, zero_count, true, 0)
+#define TMR_RAILCOM_STARTBIT   timerAlarm(dccTimer, half_one_count, true, 0)
 
 void enableDccTimer() {
   dccTimer = timerBegin(1000000);              // 1 MHz = 1 µs ticks
   //dccTimer = timerBegin(0, 80, true);  // 0=timer0, 80 prescaler → 1 µs ticks
   timerAttachInterrupt(dccTimer, &dccTimerIsr);
-  timerWrite(dccTimer, one_count);  // start with "1"-bit
+  timerAlarm(dccTimer, one_count, true, 0);   // start with "1"-bit
 }
 
 inline void startDccTimer() {
@@ -195,9 +199,9 @@ void disableDccTimer() {
 
 //******************************************************************************
 // TODO: FOR TESTING
-#define PIN_TEST1   8
-#define PIN_TEST2   9
-#define PIN_TEST3   10
+#define PIN_TEST1   12
+#define PIN_TEST2   13
+#define PIN_TEST3   14
 
 #define DEBUG1 digitalWrite(PIN_TEST1, HIGH); digitalWrite(PIN_TEST1, LOW);
 #define DEBUG2 digitalWrite(PIN_TEST2, HIGH); digitalWrite(PIN_TEST2, LOW);
