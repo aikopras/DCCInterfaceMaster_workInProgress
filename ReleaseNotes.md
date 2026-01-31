@@ -1,15 +1,10 @@
-DCC Interface Master (C) Philipp Gahtow
-base on CmdrArduino
+## Release notes
 
-This library create a DCC Signal with RailCom (optional). It can handle two DCC outputs, one with Power feature and 
-one permanent for driving LocoNet Railsync or S88N Raildata line.
-More about the features: http://pgahtow.de/wiki/index.php?title=DCC#Arduino_DCC_Library
+Release notes of the DCC Interface Master (C) Philipp Gahtow.
+These notes reflect Library Versions up to 6.4.0.
+These notes are no longer updated for Version 7.0.0 and above.
 
-I build up the library to use it with the Arduino Z21pg central station: http://pgahtow.de/wiki/index.php?title=Zentrale
-
-===========
-
-Compared to upstream the following has been changed: 
+Compared to upstream the following has been changed:
 * compatibility for ESP32C3
 * conditional compilation for ESP Cores 2.x and 3.x for Arduino
 * some minor cleanup of if then else structures
@@ -26,15 +21,15 @@ modified by Philipp Gahtow 2015-2021 digitalmoba@arcor.de
 * - support DCC generation with Timer1 or Timer2
 * - add notify of BasicAccessory even when power is off
 * - change praeambel to 16 Bit for Railcom support
-* - add Railcom hardware support 
+* - add Railcom hardware support
 * - optimize Railcom signal timing
 * - fix bug on ESP32 (https://github.com/crosstool-ng/crosstool-ng/issues/1330)
 * - fix DCC ACK Detection
 * - fix DCC Timing on ESP8266 and ESP32
 * - fix bug with ACK Detection
+
 ===========
 
-
-To install, see the general instructions for Arduino library installation here:
-http://arduino.cc/en/Guide/Environment#libraries
-
+See also:
+- http://pgahtow.de/wiki/index.php?title=DCC#Arduino_DCC_Library
+- http://pgahtow.de/wiki/index.php?title=Zentrale
