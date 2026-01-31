@@ -169,9 +169,9 @@ inline void initDccPin(DccOut_t &pinObj, uint8_t arduinoPin) {
 #define zero_count                 (TICKS_PER_US * (100))    // RCN 210
 
 // Set the Compare Match Register
-#define TMR_RAILCOM_STARTBIT       { TCB1.CCMP = half_one_count; }
-#define TMR_ONE                    { TCB1.CCMP = one_count; }
-#define TMR_ZERO                   { TCB1.CCMP = zero_count; }
+#define TMR_RAILCOM_STARTBIT        TCB1.CCMP = half_one_count
+#define TMR_ONE                     TCB1.CCMP = one_count
+#define TMR_ZERO                    TCB1.CCMP = zero_count
 
 // We use TCB1 in periodic interrupt mode and change CCMP of needed
 // Switching to other TCBs should be trivial

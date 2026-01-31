@@ -160,9 +160,9 @@ inline void initDccPin(DccOut_t &pinObj, uint8_t arduinoPin) {
 #define zero_count                 ((uint16_t)TICKS_PER_US * (100))  // RCN 210
 
 // Set the Compare Match Register
-#define TMR_RAILCOM_STARTBIT       { OCR1A = half_one_count; }
-#define TMR_ONE                    { OCR1A = one_count; }
-#define TMR_ZERO                   { OCR1A = zero_count; }
+#define TMR_RAILCOM_STARTBIT        OCR1A = half_one_count
+#define TMR_ONE                     OCR1A = one_count
+#define TMR_ZERO                    OCR1A = zero_count
 
 // We use TIMER1 in CTC mode mode and reload OCR1A each time an match occurs
 inline void enableDccTimer() {
