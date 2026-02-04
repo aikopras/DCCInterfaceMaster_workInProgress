@@ -121,6 +121,9 @@ inline void initDccPin(DccOut_t &pinObj, uint8_t arduinoPin) {
 // Part 2: Timer and ISR
 //******************************************************************************
 // Timer #defines using TCB1
+// Changing to another TCB timer, such as TCB0, would be trivial. In such case
+// a global replace of TCB1 by TCB0 would be sufficient.
+
 // We have to set the right ISR vector, and  clear the interrupt flag
 #define ISR_START    ISR(TCB1_INT_vect)
 #define ISR_PROLOGUE {TCB1.INTFLAGS = TCB_CAPT_bm; } // Clear the interrupt flag
