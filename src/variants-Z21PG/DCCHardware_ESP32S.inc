@@ -45,34 +45,6 @@
 // or later, due to changes in the hw_timer_t API and interrupt handling.
 //
 //******************************************************************************
-// Each variant file should provide the following macros (#defines) to
-// implement hardware-specific code for this variant.
-// These macros simplify ISR and setup code, providing clear and consistent
-// naming for timer counts and pin control across each driver.
-//
-// ISR specific:
-// - ISR_START     : Bind the Timer to an interrupt vector / call-back function
-// - ISR_PROLOGUE  : Code needed at the ISR start (like clearing the ISR flag)
-// - ISR_EPILOGUE  : Code needed at the ISR end
-//
-// Timer specific:
-// - TMR_ZERO                           : Load timer for a zero bit
-// - TMR_ONE                            : Load timer for a one bit
-// - TMR_RAILCOM_STARTBIT               : Load timer for RailCom start-bit
-//
-// Output specific:
-// - DCCOUT_TGL                         : Toggle the normal rail output
-// - DCCINV_TGL                         : Toggle the inverted rail output
-// - DCCMON_TGL                         : Toggle the monitor output
-// - ENABLE_DCCOUT / DISABLE_DCCOUT     : Enable or disable normal rail output
-// - ENABLE_DCCINV / DISABLE_DCCINV     : Enable or disable inverted rail output
-// - ENABLE_DCCMON / DISABLE_DCCMON     : Enable or disable monitor output
-//
-// Power-off specific:
-// - DCCOUT_LOW                         : Power-off the normal DCC rail signal
-// - DCCINV_LOW                         : Power-off the inverted DCC rail signal
-//
-//******************************************************************************
 #include <Arduino.h>
 #include "esp32-hal-timer.h"
 #include "soc/gpio_struct.h"    // <-- Voor GPIO.out_w1ts etc.
