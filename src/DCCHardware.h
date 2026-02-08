@@ -1,3 +1,24 @@
+//******************************************************************************************************
+//
+// file:      DCCHardware.h
+// purpose:   Common class file for all hardware variants
+// author:    Aiko Pras
+// version:   2026-02-01 V1.0.1 ap initial version
+//
+// history:   This is a further development of earlier DCCHardware.h files.
+//            It has been changed into a clean C++ class file and avoids the "leaking" of variables
+//            that occured in earlier versions
+//
+// hardware:  Should be able to run / adapt to all possible processors, and therefore be
+//            processor independent
+//
+// TODO: Text should be completed.
+// Note: dccRailAuxPin may be used in different ways
+//
+// This source file is subject of the GNU general public license 3,
+// that is available at the world-wide-web at http://www.gnu.org/licenses/gpl.txt
+//
+//******************************************************************************************************
 #pragma once
 #include <Arduino.h>
 
