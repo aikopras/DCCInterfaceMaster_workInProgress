@@ -56,7 +56,7 @@
 // being affected by scheduler timing, buffering, or packet queue latency.
 //
 // A detailed description of the state machine, its states, and their transitions can
-// be found in: extras/Statemachine.
+// be found in: extras/variants-Z21PG/Statemachine.
 //
 //******************************************************************************************************
 //******************************************************************************************************
@@ -73,7 +73,7 @@
 // Constructor definition
 DccPacketEngine::DccPacketEngine(){
   dccRailPin = 6;                                 // Pin for DCC rail Signal, with RailCom support
-  dccRailInvPin = 0xFF;	                          // Pin for DCC rail Signal, with RailCom support. Inverted
+  dccRailAuxPin = 0xFF;	                          // Pin for DCC rail Signal, with RailCom support. Inverted
   dccMonitorPin = 0xFF;	                          // Pin for a continuous DCC Signal, ignoring the RailCom gap / Railpower
   canAcceptPacket = true;                         // ISR is ready to receive the first packet from the user update() code
 }
@@ -170,7 +170,7 @@ void DccPacketEngine::setupWaveformGenerator() {
   // Step 2: Maps DCC output signals to MCU port registers and bitmasks.
   // Unused pins (0xFF) are explicitly disabled to prevent ISR pin access.
   initDccPin(dccRail, dccRailPin);
-  initDccPin(dccRailInv, dccRailInvPin);
+  initDccPin(dccRailInv, dccRailAuxPin);
   initDccPin(dccMonitor, dccMonitorPin);
   // Step 3: Configure the DCC timer. This prepares the timer registers and
   // interrupt source, but does not yet start the timer / DCC signal generation.

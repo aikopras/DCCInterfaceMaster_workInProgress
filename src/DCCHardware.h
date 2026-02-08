@@ -9,10 +9,10 @@ class DccPacketEngine {
 
     // DCC output pins
     uint8_t dccRailPin;   	                      // Pin for DCC rail Signal, with RailCom support
-    uint8_t dccRailInvPin;	                      // Pin for DCC rail Signal, with RailCom support. Inverted
+    uint8_t dccRailAuxPin;	                      // Pin for inverted DCC rail or Railcom gap signal
     uint8_t dccMonitorPin;                        // Pin for a continuous DCC Signal, ignoring the RailCom gap / Railpower
 
-    // DCC message specifics - new
+    // DCC message specific
     volatile bool canAcceptPacket;                // Flag that tells the user that a new packet may be sent
     void send(const uint8_t* data, uint8_t size); // Sends a DCC packet (3–6 bytes including XOR).
 

@@ -88,8 +88,8 @@ void DCCPacketScheduler::setup(uint8_t pin, uint8_t pin2, uint8_t steps, uint8_t
 {
 	loadEEPROMconfig();	//load the configuration
 
-	dccPacketEngine.dccRailPin = pin;	//set DCC Waveform pin
-	dccPacketEngine.dccRailInvPin = pin2;	//set inverted DCC Waveform pin2
+	dccPacketEngine.dccRailPin = pin;	    //set DCC Waveform pin
+	dccPacketEngine.dccRailAuxPin = pin2;	//use as inverted DCC Waveform or Railcom gap pin
 	dccPacketEngine.dccMonitorPin = 0xFF;	//disable per default
 
 	dccPacketEngine.setupWaveformGenerator();	//Timer neu configurieren
