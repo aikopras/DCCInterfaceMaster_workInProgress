@@ -80,6 +80,12 @@
 //   directly by hardware that requires an explicit cutout or "force-low"
 //   control input during RailCom reception.
 //
+// - StopOutputSignal()
+//   Forces the dccRailAuxPin LOW.
+//
+// - RunOutputSignal()
+//   Re-enables the dccRailAuxPin signal.
+
 // - dccMonitorPin
 //   Has no function in HQ mode and does not produce any signal.
 //
@@ -124,8 +130,8 @@ class DccPacketEngine {
     bool railComGap(void);                        // Does the DCC Harware generate a Railcom gap at this moment?
 
     // Init, start and stop
-    void StopOutputSignal(void);                  // Z21PG: forces dccRailPin and dccRailAuxPin LOW; no effect in HQ
-    void RunOutputSignal(void);                   // Z21PG: re-enables DCC outputs; no effect in HQ
+    void StopOutputSignal(void);                  // Forces dccRailPin (Z21PG & HQ) and dccRailAuxPin (HQ) LOW
+    void RunOutputSignal(void);                   // Re-enables the signal on the pins
     void setupWaveformGenerator();                // Setup and start the waveform generator
 
     DccPacketEngine();                            // Constructor declaration
