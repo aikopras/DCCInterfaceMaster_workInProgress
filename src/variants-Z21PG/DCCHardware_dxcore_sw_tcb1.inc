@@ -153,6 +153,9 @@ inline void enableDccTimer() {
   TCB1.INTCTRL  = TCB_CAPT_bm;          // enable capture/timeout interrupt
   TCB1.CTRLA = TCB_CLKSEL_CLKDIV1_gc;   // Set the prescaler to 1
   TCB1.CNT = 0;                         // Make sure the counter is zero
+  // Optional, in case of jitter, the priority of the ISR can be raised to
+  // Level 1. Only 1 Level 1 ISR is possible, however.
+  CPUINT.LVL1VEC = TCB1_INT_vect_num;   // TCB1 becomes level 1
 }
 
 inline void startDccTimer() {TCB1.CTRLA |= TCB_ENABLE_bm;}
