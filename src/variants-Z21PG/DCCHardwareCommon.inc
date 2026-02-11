@@ -244,8 +244,6 @@ bool DccPacketEngine::isServiceModeEnabled(void) {
 
 void DccPacketEngine::setServiceModeMaxRepeats(uint8_t value) {
   dccISR.smMaxRepeats = value;
-  // TODO: ALLEEN VOOR TESTEN
-  dccISR.smMaxRepeats = 15;
 }
 
 bool DccPacketEngine::isFirstServiceModePacket(void) {
