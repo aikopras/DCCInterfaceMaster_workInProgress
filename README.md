@@ -27,9 +27,9 @@ More recently, **Aiko Pras** and **Rob van Hoeijen** restructured the library to
 
 ## Generated Signals and Operating Modes
 
-The library can be used in two different operating modes: **Z21pg mode** (default) and **stand-alone mode**. Each mode defines which signals are generated and how they are intended to be used in hardware.
+The library can be used in two different operating modes: **Z21pg mode** (default) and **HQ mode**. Each mode defines which signals are generated and how they are intended to be used in hardware.
 
-In **Z21pg mode**, the library outputs up to three signals on dedicated processor pins. These consist of a DCC rail signal, an inverted DCC rail signal, and an optional monitor signal. Both DCC rail signals can optionally include a RailCom cutout (gap), allowing RailCom feedback to be supported directly. In addition, both rail signals can be disabled using a power-down control, for example in response to a short circuit or an explicit user request.
+In **Z21pg mode**, the library outputs up to three signals on dedicated processor pins. These consist of a DCC rail signal, an inverted DCC rail signal, and an optional monitor signal. Both DCC rail signals can optionally include a RailCom cutout (gap), allowing RailCom feedback to be supported directly. In addition, both rail signals can be disabled using a power-down command, for example in response to a short circuit or an explicit user request.
 
 This mode is optimized for use with an **L6203 H-bridge**. Because both the normal and inverted DCC rail signals are provided, the L6203 can be driven directly without the need for external logic components.
 
@@ -37,7 +37,9 @@ The optional **monitor signal** always carries a continuous DCC signal. It never
 
 [![DCC signals in Z21pg mode](extras/Figures/Z21PG.png)](extras/Figures/Z21PG.png)
 
-In **stand-alone mode**, the library generates only two output signals: a continuous DCC signal and a separate signal indicating the RailCom cutout. Depending on the type of H-bridge used, additional external logic may be required to combine these signals into a proper rail output.
+In **HQ mode**, the library generates only two output signals: a continuous DCC signal and a separate signal carrying the RailCom cutout (a third monitor signal is not available). The RailCom cutout signal will be disabled after a power-down command. Next to the DCC and RailCom cutout signals, additional signals may be needed to operate a H-bridge; these additional signals are not part of this library. Depending on the type of H-bridge used, external logic may be required to combine these signals into a proper rail output. An example HQ output is shown in the figure below.
+
+[![DCC signals in HQ mode](extras/Figures/ESP32-No-RailCom.png)](extras/Figures/ESP32-No-RailCom.png)
 
 ---
 
@@ -47,7 +49,7 @@ The way DCC signals are generated depends on the selected operating mode and has
 
 In **Z21pg mode**, all three output signals are generated in software using a timer-driven interrupt service routine (bit-banging). The main advantage of this approach is portability: the signal generation logic is largely processor-agnostic, making it relatively easy to adapt the library to new microcontroller platforms. The downside is that, depending on the chosen processor, timing jitter may be present in the generated DCC signal. This effect is noticeable on platforms such as the ESP32 and classic Arduino boards like the UNO and MEGA, where interrupt latency and background system activity can influence timing precision.
 
-In **stand-alone mode**, the DCC signals are generated entirely in hardware. As a result, the output signals are free of jitter and exhibit superior timing accuracy. By leveraging dedicated hardware peripherals available on modern microcontrollers—such as DMA, RMT, or PIO—the CPU load is kept to a minimum while maintaining very high signal quality.
+In **HQ mode**, the DCC signals are generated entirely in hardware. As a result, the output signals are free of jitter and exhibit superior timing accuracy. By leveraging dedicated hardware peripherals available on modern microcontrollers—such as DMA, RMT, or PIO—the CPU load is kept to a minimum while maintaining very high signal quality.
 
 ---
 
@@ -59,7 +61,11 @@ For **Z21pg mode**, the library supports a wide range of processors. This includ
 
 In addition to 8-bit devices, several **32-bit microcontroller platforms** are supported in Z21pg mode, including the **ESP32**, **ESP8266**, **SAMD**, and **STM32** families.
 
-It should be noted that for **stand-alone mode** this library is still under active development and therefore not yet complete.
+For **HQ mode**, the library supports the following processors:
+- ESP32, using the RMT for signal generation. See  [DCC Encoding on an ESP32](extras/variants-HQ/ESP32/RMT.md) for details.
+- STM32: coming soon 
+
+It should be noted that for **HQ mode** this library is still under active development and therefore not yet complete.
 
 ---
 
