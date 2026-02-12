@@ -62,8 +62,6 @@
 //******************************************************************************************************
 // 1. Defines
 //******************************************************************************************************
-#define PREAMBLE_LENGTH 17        	// see RCN-211 (Ausgabe 23.07.2023)
-#define PREAMBLE_LENGTH_SM 20       // see RCN-216 (Ausgabe 24.11.2025)
 #define RAILCOM_CUTOUT_LENGTH 4	  	// see RCN-217 (Ausgabe 24.11.2025)
 
 
@@ -107,6 +105,8 @@ typedef enum  {
 } DCC_output_state_t;
 
 // Define the structure for all variables used by the ISR
+// The inital values for preambleLength is taken from RCN-211 (Ausgabe 23.07.2023)
+// The inital values for preambleLengthSM is taken from RCN-216 (Ausgabe 24.11.2025)
 struct DCC_ISR_State {
   volatile DCC_output_state_t state;             // Initial state of the ISR state machine
   volatile uint8_t bitsRemaining;                // Bits remaining in current phase (preamble or data byte)
@@ -126,15 +126,17 @@ struct DCC_ISR_State {
   volatile bool railComGapFlag;	                 // In the gap, this flag is guaranteed to be true
   volatile bool railCom;                         // Should we generate a RailCom gap?
   volatile bool railPower;	                     // Controls if the railsignal is on/off
+  volatile uint8_t preambleLength = 17;          // Length of the preamble in normal operation
+  volatile uint8_t preambleLengthSM = 20;        // Length of the preamble in Service Mode
 };
 
 static DCC_ISR_State dccISR;                     // Create an instance of the struct for the ISR
 
-void initIsr() {
-  // Note that we do not (re)set railCom and railPower,
+static void initIsr() {
+  // Note that we do not (re)set railCom, railPower, preambleLength and preambleLengthSM,
   // since the user may already have set these values.
   dccISR.state = dccPreambleStartBit;            // We start in the dccPreambleStartBit state
-  dccISR.bitsRemaining = PREAMBLE_LENGTH;        // With a normal preamble (this SM is false)
+  dccISR.bitsRemaining = dccISR.preambleLength;  // With a normal preamble (thus SM is false)
   dccISR.bytesRemainingInPacket = 0;             // We start with an empty packet
   dccISR.firstHalfBit = true;	                   // We must start with the first DCC Halfbit
   dccISR.firstHalfBitRC = true;	                 // And the first part of the Railcom start bit
@@ -156,9 +158,6 @@ void initIsr() {
   dccISR.defaultPacketSize = 3;
 }
 
-void DccPacketEngine::resetStateMachine() {
-  initIsr();
-}
 
 //******************************************************************************
 // 4. Setup the Interrupt timer and configure the output pins
@@ -189,7 +188,7 @@ void DccPacketEngine::setupWaveformGenerator() {
   // Step 6: Reinitialise the DCC state machine.
   // This resets all ISR state so the first interrupt starts in a
   // well-defined condition (dccPreambleStartBit with a '1'-bit preamble).
-  resetStateMachine();
+  initIsr();
   // Step 7: Start the DCC timer and enable interrupt-driven waveform generation.
   // From this point on, the ISR takes full control of timing and pin toggling.
   startDccTimer();
@@ -315,8 +314,29 @@ void DccPacketEngine::RunOutputSignal() {
 	dccISR.railPower = true;
 }
 
+
 //******************************************************************************
-// 9. Inline functions for bit toggle
+// 9. Setters to change certain aspects of the DCC encoder
+//******************************************************************************
+void DccPacketEngine::setPreambleLength(uint8_t value) {
+  // RCN-211 (23.07.2023): Eine Zentrale muss mindestens 17 Synchronbits senden
+  if (value < 17) return;
+  dccISR.preambleLength = value;      // Length of normal preamble
+}
+
+void DccPacketEngine::setPreambleLengthSM(uint8_t value) {
+  // RCN-216 (24.11.2025): im Programmiermodus mindestens 20 Synchronbits
+  if (value < 20) return;
+  dccISR.preambleLengthSM = value;      // Length of preamble in Service Mode
+}
+
+// The following two functions are not used by the Z21PG variants
+void DccPacketEngine::setAuxActiveLevel(bool activeHigh) {(void)activeHigh;}
+void DccPacketEngine::setRailComGapInAux(bool useForRcCutout) {(void)useForRcCutout;}
+
+
+//******************************************************************************
+// 10. Inline functions for bit toggle
 //******************************************************************************
 // First half-bit toggle
 // During the first half-bit, the normal rail output starts LOW and the
@@ -496,7 +516,7 @@ ISR_START {
         if (dccISR.bitsRemaining == 0) {      // Last half of last RailCom Gap bit
           if (dccISR.railPower)               // Only if the rails may be powered
             ENABLE_DCCOUT;                    // The normal pin is allowed to toggle again
-          dccISR.bitsRemaining = PREAMBLE_LENGTH - RAILCOM_CUTOUT_LENGTH;
+          dccISR.bitsRemaining = dccISR.preambleLength - RAILCOM_CUTOUT_LENGTH;
           dccISR.state = dccPreambleStartBit;
         }
       break;
@@ -543,12 +563,12 @@ ISR_START {
             if (dccISR.railPower)                   // Only if the rails may be powered
               ENABLE_DCCOUT;                        // The normal pin is allowed to toggle again
             dccISR.state = dccPreambleStartBit;
-            dccISR.bitsRemaining = PREAMBLE_LENGTH; // Normal preamble (RCN 211)
+            dccISR.bitsRemaining = dccISR.preambleLength; // Normal preamble (RCN 211)
             }
           }
         else {
           dccISR.state = dccPreamble;
-          dccISR.bitsRemaining = PREAMBLE_LENGTH_SM; // Long preamble (RCN 216)
+          dccISR.bitsRemaining = dccISR.preambleLengthSM; // Long preamble (RCN 216)
         }
       break;
 

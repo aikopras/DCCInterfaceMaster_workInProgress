@@ -134,10 +134,13 @@ class DccPacketEngine {
     void RunOutputSignal(void);                   // Re-enables the signal on the pins
     void setupWaveformGenerator();                // Setup and start the waveform generator
 
-    DccPacketEngine();                            // Constructor declaration
+    // Settings
+    void setPreambleLength(uint8_t value);        // Length of normal preamble (>= 17)
+    void setPreambleLengthSM(uint8_t value);      // Length of preamble in Service Mode (>= 20)
+    void setAuxActiveLevel(bool activeHigh);      // Only HQ: the AuxPin value after RunOutputSignal()
+    void setRailComGapInAux(bool useForRcCutout); // Only HQ: is the AuxPin used for the RC cutout?
 
-  private:
-    void resetStateMachine();                     // To (re)set the state machine to a defined state
+    DccPacketEngine();                            // Constructor declaration
 };
 
 extern DccPacketEngine dccPacketEngine;           // The dccPacketEngine must be accessible externally
