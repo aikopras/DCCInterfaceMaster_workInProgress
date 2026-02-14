@@ -98,7 +98,7 @@
 #pragma once
 #include <Arduino.h>
 
- #define MaxDccSize 6                              // DCC messages can have a length upto this value
+#define MaxDccSize 6                              // DCC messages can have a length upto this value
 
 // The interface between the outside world and DCCHardware
 class DccPacketEngine {

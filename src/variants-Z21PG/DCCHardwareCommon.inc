@@ -119,11 +119,11 @@ struct DCC_ISR_State {
   volatile uint8_t defaultPacketSize;            // Always 3 bytes
   volatile bool firstHalfBit;	                   // The ISR starts with the first DCC Halfbit
   volatile bool firstHalfBitRC;	                 // And the first part of the Railcom start bit
-  volatile bool smEnabled;                       // SM active (long preamble, resets, SM flow allowed)
-  volatile bool packetIsSmPacket;                // We have to send Service Mode Packets
+  volatile bool smActive;                        // SM active (long preamble, resets, SM flow allowed)
+  volatile bool isServiceModePacket;             // We have to send Service Mode Packets
   volatile uint8_t smRepeatsRemaining;           // Number of retransmissions left for this SM packet
   volatile uint8_t smMaxRepeats;	               // Number of SM retransmissions after first send
-  volatile bool railComGapFlag;	                 // In the gap, this flag is guaranteed to be true
+  volatile bool railComCutoutInProgress;	       // In the gap, this flag is guaranteed to be true
   volatile bool railCom;                         // Should we generate a RailCom gap?
   volatile bool railPower;	                     // Controls if the railsignal is on/off
   volatile uint8_t preambleLength = 17;          // Length of the preamble in normal operation
@@ -141,12 +141,12 @@ static void initIsr() {
   dccISR.firstHalfBit = true;	                   // We must start with the first DCC Halfbit
   dccISR.firstHalfBitRC = true;	                 // And the first part of the Railcom start bit
   // Service Mode settings
-  dccISR.smEnabled = false;
-  dccISR.packetIsSmPacket = false;
+  dccISR.smActive = false;
+  dccISR.isServiceModePacket = false;
   dccISR.smRepeatsRemaining = 0;
   dccISR.smMaxRepeats = 10;
   // RailCom settings
-  dccISR.railComGapFlag = false;
+  dccISR.railComCutoutInProgress = false;
   // Packet initialisation
   for (uint8_t i = 0; i < MaxDccSize; ++i) dccISR.currentPacket[i] = 0;
   dccISR.currentPacketSize = 0;
@@ -201,7 +201,7 @@ void DccPacketEngine::send(const uint8_t* data, uint8_t size) {
   if (size == 0 || size > MaxDccSize) return;   // Illegal packet size
   // Check if this is a SM packet
   // RCN-216: Service Mode packets have 0111xxxx as first byte
-  dccISR.packetIsSmPacket = (data[0] & 0xF0) == 0b01110000;
+  dccISR.isServiceModePacket = (data[0] & 0xF0) == 0b01110000;
   // Copy the received data to nextPacket
   noInterrupts();
   for (uint8_t i = 0; i < size; i++) dccISR.nextPacket[i] = data[i];
@@ -215,7 +215,7 @@ void DccPacketEngine::send(const uint8_t* data, uint8_t size) {
 //******************************************************************************
 void DccPacketEngine::enterServiceMode(void) {
   // Enable Service Mode behaviour (long preamble, reset packets, SM flow).
-  dccISR.smEnabled = true;
+  dccISR.smActive = true;
   // Pre-generate the reset packet (to make the ISR faster)
   noInterrupts();
   dccISR.defaultPacket[0] = 0;
@@ -226,7 +226,7 @@ void DccPacketEngine::enterServiceMode(void) {
 
 void DccPacketEngine::leaveServiceMode(void) {
   // Leave Service Mode immediately. Ongoing SM retransmissions are cancelled.
-  dccISR.smEnabled = false;
+  dccISR.smActive = false;
   dccISR.smRepeatsRemaining = 0;
   // Pre-generate the idle packet (to make the ISR faster)
   noInterrupts();
@@ -238,7 +238,7 @@ void DccPacketEngine::leaveServiceMode(void) {
 
 bool DccPacketEngine::isServiceModeEnabled(void) {
   // Returns true if the system is currently in Service Mode.
-  return dccISR.smEnabled;
+  return dccISR.smActive;
 }
 
 void DccPacketEngine::setServiceModeMaxRepeats(uint8_t value) {
@@ -247,12 +247,12 @@ void DccPacketEngine::setServiceModeMaxRepeats(uint8_t value) {
 
 bool DccPacketEngine::isFirstServiceModePacket(void) {
   // True only for the first transmission of a new SM packet.
-  return dccISR.smEnabled && (dccISR.smRepeatsRemaining == dccISR.smMaxRepeats);
+  return dccISR.smActive && (dccISR.smRepeatsRemaining == dccISR.smMaxRepeats);
 }
 
 bool DccPacketEngine::isServiceModeRepeating(void) {
   // True while the ISR is busy retransmitting the current SM packet.
-  return dccISR.smEnabled && (dccISR.smRepeatsRemaining > 0);
+  return dccISR.smActive && (dccISR.smRepeatsRemaining > 0);
 }
 
 void DccPacketEngine::stopServiceModeRepeats(void) {
@@ -279,11 +279,11 @@ bool DccPacketEngine::getRailCom(void) { // Is generation of the RailCom gap ena
 // a RailCom gap. Therefore, a conservative signaling approach is used.
 // The start of the gap is indicated immediately when the RailCom start bit begins,
 // while the end of the gap is indicated slightly after the actual gap.
-// This is implemented using the boolean flag 'railComGapFlag', which is set
-// at the start of the RailCom start bit and cleared at the first bit of the
-// subsequent preamble.
+// This is implemented using the boolean flag 'railComCutoutInProgress', which
+// is set at the start of the RailCom start bit and cleared at the first bit of
+// the subsequent preamble.
 bool DccPacketEngine::railComGap(void) {
-  return dccISR.railComGapFlag;
+  return dccISR.railComCutoutInProgress;
 }
 
 
@@ -409,7 +409,7 @@ ISR_START {
           TMR_RAILCOM_STARTBIT;             // Set the timer, to trigger after 29us
           DISABLE_DCCINV;                   // The Inverse pin will not toggle during the RC gap
           DISABLE_DCCMON;                   // The Monitor pin will skip the toggle after 29us
-          dccISR.railComGapFlag = true;     // The RailCom gap just started
+          dccISR.railComCutoutInProgress = true;  // The RailCom gap just started
           // Next ISR (in 29us from now) we must handle the second part of the RailCom start bit.
           dccISR.firstHalfBitRC = false;
           // Since normal DCC halfbits are either 58us or 100us, we must stay in the first DCC halfbit.
@@ -433,7 +433,7 @@ ISR_START {
       case dccPreambleStartBit:
         if (dccISR.railPower)               // Only if their there should be power on the rails
           ENABLE_DCCINV;                    // We restart the inverted signal
-        dccISR.railComGapFlag = false;      // Only now we are certain that the gap is over
+        dccISR.railComCutoutInProgress = false; // Only now we are certain that the gap is over
       break;
 
       case dccPreamble:
@@ -454,7 +454,7 @@ ISR_START {
               dccISR.currentPacket[i] = dccISR.nextPacket[i];
             dccISR.currentPacketSize = dccISR.nextPacketSize;
             // Setup SM retransmission if required
-            if (dccISR.packetIsSmPacket)
+            if (dccISR.isServiceModePacket)
               dccISR.smRepeatsRemaining = dccISR.smMaxRepeats;
           } else {
             // No new packet: load default packet
