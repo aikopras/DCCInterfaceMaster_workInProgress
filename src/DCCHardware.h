@@ -135,6 +135,7 @@ class DccPacketEngine {
     void setupWaveformGenerator();                // Setup and start the waveform generator
 
     // Settings
+    void setDccSignalInverted(bool inverted);     // Changes the polarity of the DCC signal(s)
     void setPreambleLength(uint8_t value);        // Length of normal preamble (>= 17)
     void setPreambleLengthSM(uint8_t value);      // Length of preamble in Service Mode (>= 20)
     void setAuxActiveLevel(bool activeHigh);      // Only HQ: the AuxPin value after RunOutputSignal()

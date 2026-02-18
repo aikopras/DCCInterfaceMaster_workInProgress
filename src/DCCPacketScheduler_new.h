@@ -89,7 +89,8 @@
 #include "DCCPacket.h"
 #include "DCCPacketQueue.h"
 
-/*******************************************************************/
+
+//*******************************************************************/
 //#define PROG_DEBUG	//Serial output of Prog Informaton
 
 #if defined(ESP8266) // ESP8266 or WeMos D1 mini
