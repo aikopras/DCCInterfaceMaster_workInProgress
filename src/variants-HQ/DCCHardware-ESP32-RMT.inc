@@ -253,7 +253,10 @@ static inline void initAuxPin() {
     gpio_set_direction(dccTx.auxPin, GPIO_MODE_OUTPUT);
     disableAuxOutput();     // default off.
   }
-  else dccTx.auxPinConfigured = false;
+  else {
+    dccTx.auxPinConfigured = false;
+    dccPacketEngine.dccRailAuxPin = 0xFF;
+  }
 }
 
 
@@ -558,11 +561,14 @@ static inline void createRmtEncoder() {
 }
 
 
-static inline void setupRmtChannel(uint8_t pin, bool invert = false) {
-  rmt_tx_channel_config_t cfg = configureRmtTxChannel(pin, invert);
-  ESP_ERROR_CHECK(rmt_new_tx_channel(&cfg, &espTx.channel));
-  createRmtEncoder();
-  ESP_ERROR_CHECK(rmt_enable(espTx.channel));
+static inline void setupRmtChannel(bool invert = false) {
+  if (GPIO_IS_VALID_OUTPUT_GPIO(dccPacketEngine.dccRailPin)) {
+    rmt_tx_channel_config_t cfg = configureRmtTxChannel(dccPacketEngine.dccRailPin, invert);
+    ESP_ERROR_CHECK(rmt_new_tx_channel(&cfg, &espTx.channel));
+    createRmtEncoder();
+    ESP_ERROR_CHECK(rmt_enable(espTx.channel));
+  }
+  else dccPacketEngine.dccRailPin = 0xFF;
 }
 
 
@@ -582,7 +588,7 @@ static inline void startRmtWaveformGenerator() {
   // Set (or reset) state variables to their initial value.
   initTxEngines();
   // We create the RMT channel for the dccRailPin here
-  setupRmtChannel(dccPacketEngine.dccRailPin, dccTx.dccSignalInverted);
+  setupRmtChannel(dccTx.dccSignalInverted);
   espTx.config.loop_count = 0;                 // Send this packet only once
   // Register a callback that triggers when a packet transmission completed.
   rmt_tx_event_callbacks_t cbs = {};

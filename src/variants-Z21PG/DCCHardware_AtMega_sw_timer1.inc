@@ -76,8 +76,8 @@ static DccOut_t dccRailInv;   // Create an instance for the dccRailInv
 //   - Disables toggling initially (enable = false)
 // If the pin is 0xFF (not used), all pointers are set to nullptr and enable
 // is false
-inline void initDccPin(DccOut_t &pinObj, uint8_t arduinoPin) {
-  if (arduinoPin != 0xFF) {
+inline void initDccPin(DccOut_t &pinObj, uint8_t &arduinoPin) {
+  if (arduinoPin != 0xFF && arduinoPin < NUM_DIGITAL_PINS) {
     pinMode(arduinoPin, OUTPUT);                  // Port is output
     uint8_t port = digitalPinToPort(arduinoPin);  // Mapping from pin to port
     pinObj.port = portOutputRegister(port);       // Port register
@@ -89,6 +89,7 @@ inline void initDccPin(DccOut_t &pinObj, uint8_t arduinoPin) {
     pinObj.port = nullptr;
     pinObj.bit = 0;
     pinObj.enable = false;
+    arduinoPin = 0xFF;
   }
 }
 

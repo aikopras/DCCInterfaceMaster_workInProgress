@@ -83,12 +83,13 @@ Each driver must implement:
     inline void initDccPin(DccOut_t &pinObj, uint8_t arduinoPin);
 
 Responsibilities:
+- Check if the pin is a valid pin for output
 - Configure the pin as OUTPUT
 - Map the Arduino pin to the correct hardware
 - Force a safe initial LOW state
 - Disable toggling initially
 
-Unused pins are represented by setting the pin number to 0xFF. In these cases, all register pointers are set to nullptr, the bitmask is 0, and the enable flag is false, ensuring the driver will not attempt to toggle the pin.
+Unused pins are represented by setting the pin number to 0xFF. In these cases, all register pointers are set to nullptr, the bitmask is 0, and the enable flag is false, ensuring the driver will not attempt to toggle the pin. The value of invalid pins should be set to 0xFF, to provide feedback to the user.
 
 #### 1..3 Output control macros
 

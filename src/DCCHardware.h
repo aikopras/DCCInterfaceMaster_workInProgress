@@ -28,6 +28,8 @@
 // interface, but they map the abstract functions of this class to different
 // electrical behaviour on the pins.
 //
+// If an invalid pin is specified, the driver will change its value to 0xFF.
+//
 // -----------------------------------------------------------------------------
 // Z21PG MODE (default and backward compatible)
 // -----------------------------------------------------------------------------

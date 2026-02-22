@@ -73,8 +73,8 @@ static DccOut_t dccRailInv;   // Create an instance for the dccRailInv
 // Create a dummy pointer address, to avoid problems with null pointers
 static volatile uint32_t gpio_dummy;
 
-inline void initDccPin(DccOut_t &pinObj, uint8_t arduinoPin) {
-  if (arduinoPin != 0xFF) {
+inline void initDccPin(DccOut_t &pinObj, uint8_t &arduinoPin) {
+  if (GPIO_IS_VALID_OUTPUT_GPIO(arduinoPin)) {
     pinMode(arduinoPin, OUTPUT);
     uint8_t gpio = arduinoPin;            // Simply use the Arduino pin
     pinObj.enable = false;
@@ -98,6 +98,7 @@ inline void initDccPin(DccOut_t &pinObj, uint8_t arduinoPin) {
     pinObj.outtgl = &gpio_dummy;
     pinObj.bit    = 0;
     pinObj.enable = false;
+    arduinoPin = 0xFF;
   }
 }
 
