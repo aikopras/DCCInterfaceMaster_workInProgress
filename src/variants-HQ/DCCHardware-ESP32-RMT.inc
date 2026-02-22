@@ -93,12 +93,23 @@
 //================================================================================================
 //                                      Defines
 //================================================================================================
-// The values for RMT_START_OFFSET and GPT_OFFSET have been determined via measurements
-// on an ESP32-WROOM module with 240Mhz clock speed. These values may not be optimal for
-// Other ESP32 processors.
-#define RMT_START_OFFSET 25         // Time the RMT needs to output the first symbol (in us)
-
-#define GPT_OFFSET 7                // Compensation for the GP Timer
+// The values for RMT_START_OFFSET and GPT_OFFSET were determined empirically on an ESP32-WROOM
+// module. Measurements were taken at 240 MHz and 160 MHz. Our goal was to set the second half of
+// the end bit to 55 µs, which corresponds to the lower threshold specified by the RCN210 standard.
+// Due to timing jitter, this 55 µs interval can increase but will not decrease, providing us 6 µs
+// of headroom. If this jitter margin proves insufficient, increasing the preamble length may help.
+// An unexpected behavior was observed: when the AUX pin generates a RailCom gap, the effective
+// delay increases. The cause of this effect is currently unclear.
+#if F_CPU == 240000000
+  #define RMT_START_OFFSET 25         // Time the RMT needs to output the first symbol (in us)
+  #define GPT_OFFSET 7                // Compensation for the GP Timer
+#elif F_CPU == 160000000
+  #define RMT_START_OFFSET 36
+  #define GPT_OFFSET 10
+#else
+  #define RMT_START_OFFSET ((25UL * 240UL) / (F_CPU / 1000000UL))
+  #define GPT_OFFSET       ((7UL  * 240UL) / (F_CPU / 1000000UL))
+#endif
 
 #define TCS  ( 29 + GPT_OFFSET)     // RCN-217: cutout start   (26..32 us)
 #define TCE  (463 + GPT_OFFSET)     // RCN-217: cutout end     (454..488 us)
