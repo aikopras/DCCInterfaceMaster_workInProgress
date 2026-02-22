@@ -128,13 +128,14 @@ struct DCC_ISR_State {
   volatile bool railPower;	                     // Controls if the railsignal is on/off
   volatile uint8_t preambleLength = 17;          // Length of the preamble in normal operation
   volatile uint8_t preambleLengthSM = 20;        // Length of the preamble in Service Mode
+  bool dccSignalInverted = false;                // Polarity of the DCC signal
 };
 
 static DCC_ISR_State dccISR;                     // Create an instance of the struct for the ISR
 
 static void initIsr() {
-  // Note that we do not (re)set railCom, railPower, preambleLength and preambleLengthSM,
-  // since the user may already have set these values.
+  // Note that we do not (re)set railCom, railPower, preambleLength, preambleLengthSM
+  // and dccSignalInverted, since the user may already have set these values.
   dccISR.state = dccPreambleStartBit;            // We start in the dccPreambleStartBit state
   dccISR.bitsRemaining = dccISR.preambleLength;  // With a normal preamble (thus SM is false)
   dccISR.bytesRemainingInPacket = 0;             // We start with an empty packet
@@ -177,9 +178,16 @@ void DccPacketEngine::setupWaveformGenerator() {
   // Step 4: Force all DCC output pins into a known safe initial state.
   // Normal rail starts LOW, inverted rail HIGH (complementary),
   // monitor output LOW. No toggling is allowed yet.
-  DCCOUT_LOW;
-  DCCINV_HGH;
-  DCCMON_LOW;
+  if (!dccISR.dccSignalInverted) {
+    DCCOUT_LOW;
+    DCCINV_HGH;
+    DCCMON_LOW;
+  }
+  else {
+    DCCOUT_HGH;
+    DCCINV_LOW;
+    DCCMON_HGH;
+  }
   // Step 5: Enable toggling of the DCC output channels.  From this point on,
   // the ISR is allowed to toggle these pins according to the DCC state machine.
   ENABLE_DCCOUT;
@@ -328,6 +336,13 @@ void DccPacketEngine::setPreambleLengthSM(uint8_t value) {
   // RCN-216 (24.11.2025): im Programmiermodus mindestens 20 Synchronbits
   if (value < 20) return;
   dccISR.preambleLengthSM = value;      // Length of preamble in Service Mode
+}
+
+void DccPacketEngine::setDccSignalInverted(bool inverted) {
+  // Changes the polarity of the DCC signal(s)
+  if (dccISR.dccSignalInverted == inverted) return;
+  dccISR.dccSignalInverted = inverted;
+  dccPacketEngine.setupWaveformGenerator();  // restart
 }
 
 // The following two functions are not used by the Z21PG variants
