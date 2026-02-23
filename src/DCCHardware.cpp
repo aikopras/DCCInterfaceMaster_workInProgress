@@ -30,18 +30,8 @@
 
   // ESP32 (all)
   #elif defined(ARDUINO_ARCH_ESP32)
-
-    //  ESP32-C series (RISC-V)
-    #if defined(CONFIG_IDF_TARGET_ESP32C3) || \
-        defined(CONFIG_IDF_TARGET_ESP32C5) || \
-        defined(CONFIG_IDF_TARGET_ESP32C6)
-
-      #include "variants-Z21PG/DCCHardware_ESP32C.inc"
-
-    // ESP32-S series (Xtensa: ESP32 / S2 / S3)
-    #else
-      #include "variants-Z21PG/DCCHardware_ESP32S.inc"
-    #endif
+    #include "variants-Z21PG/DCCHardware_ESP32.inc"
+    // #include "variants-Z21PG/DCCHardware_ESP32S.inc"
 
   // SAMD processors
   #elif defined(ARDUINO_ARCH_SAMD)

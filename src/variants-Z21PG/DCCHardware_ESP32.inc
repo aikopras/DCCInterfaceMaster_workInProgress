@@ -1,12 +1,10 @@
 //******************************************************************************
 //
-// File:            DCCHardware_ESP32S.inc
-// Purpose:         DCC Waveform Generator for ESP32-S (Xtensa) processors
-//                  (bit-banging), using direct register access for pin changes.
+// File:            DCCHardware_ESP32C.inc
+// Purpose:         DCC Waveform Generator for ESP32 processors (bit-banging)
+//                  ESP32-C (RISC-V) and ESP32-S (Xtensa)
 // Copyright 2026:  Aiko Pras
-// History:         2026-01-31 / Aiko Pras - First version
-//                  2026-02-23 / AP V2.0: HWTimer replaced by GPTimer (more portable)
-//                                        Note: a generic ESP32 driver exists too.
+// History:         2026-02-22 / Aiko Pras - First version
 //
 //
 // Historical credits:
@@ -25,56 +23,49 @@
 //     * Added support for service mode, RailCom cutouts and 3 DCC output pins
 //
 // Hardware layer overview:
-// This file implements the ESP32-S series (Xtensa: ESP32 / S2 / S3) specific
-// hardware abstraction layer for software-based DCC waveform generation
-// using hw_timer_t.
+// This file implements the ESP32-S and ESP32-C series hardware abstraction layer
+// for software-driven waveform generation using a hardware timer ISR.
 //
 // It connects the processor-independent DCC state machine
 // (DCCHardwareCommon.inc) to the ESP32 hardware by providing:
-//
-//   - Configuration and control of an ESP32 hardware timer (GPTimer)
-//     with microsecond resolution for accurate DCC bit timing
-//   - Binding of the generic DCC ISR to an ESP32 timer interrupt callback
-//   - Inline macros for fast, deterministic GPIO pin toggling using
-//     direct register access
-//   - Initialization, enabling, and disabling of the DCC rail outputs
-//     and optional monitor output
+//  - Configuration and control of an ESP32 hardware timer (gptimer)
+//    with 1 µs timer resolution for accurate DCC bit timing
+//  - Binding of the generic DCC ISR to an ESP32 timer interrupt callback
+//  - Inline macros for fast, deterministic GPIO pin toggling using
+//    gpio_set_level macros (see below)
+//  - Initialization, enabling, and disabling of the DCC rail outputs
+//    and optional monitor output
 //
 // The DCC waveform is generated entirely in software (bit-banging).
 // All output transitions are executed inside the timer ISR to guarantee
 // precise timing independent of the main application code.
 //
-// Note 1: This implementation requires Arduino-ESP32 core version 3.x or higher
+//
+// GPIO toggle method comparison (ESP-IDF v5+, ESP32 S/C variants)
+// ---------------------------------------------------------------
+// REG_WRITE():
+//   - Fastest method (direct register access)
+//   - Typical toggle time: ~20–40 ns
+//   - Not portable across ESP32 families (register layout differs)
+//   - Not future-proof (may break with new SoCs or IDF changes)
+//
+// gpio_ll_set_level():
+//   - Low-level HAL function used internally by ESP-IDF
+//   - Typical toggle time: ~40–80 ns
+//   - Portable across ESP32 S/C variants
+//   - Reasonably future-proof, but not part of the strict public API
+//
+// gpio_set_level():
+//   - Official high-level driver API
+//   - Typical toggle time: ~100–250 ns
+//   - Fully portable across ESP32 families
+//   - Fully future-proof and officially supported
+//
+// Note: This implementation requires Arduino-ESP32 core version 3.x or higher
 // (ESP-IDF Version 5).
-//
-//
-// Comparison with the generic ESP32 driver
-// ----------------------------------------
-// A generic ESP32 hardware driver is also available that uses the official
-// gpio_set_level() API for pin control. That implementation is fully
-// portable across ESP32 families (Xtensa and RISC-V) and relies only on
-// the supported ESP-IDF driver layer.
-//
-// This Xtensa-specific driver differs in that it uses direct register
-// access (GPIO.out_w1ts / out_w1tc) for setting and clearing output pins.
-// This approach results in:
-//   - Slightly lower GPIO toggle latency
-//   - Fully deterministic single-instruction register writes
-//   - Independence from changes in the higher-level GPIO driver API
-//
-// In practice, for DCC bit timing (58 µs / 100 µs), the performance
-// difference between direct register access and gpio_set_level() is
-// negligible, since timing accuracy is primarily determined by the
-// hardware timer and ISR latency rather than GPIO write speed.
-//
-// This file is therefore retained mainly as a low-level, Xtensa-optimized
-// fallback implementation. It serves as a reference and backup solution
-// in case future ESP-IDF or Arduino-ESP32 changes introduce unexpected
-// problems in the generic driver.
 //
 //******************************************************************************
 #include <Arduino.h>
-#include "soc/gpio_struct.h"    // For GPIO.out
 #include "driver/gptimer.h"
 #include "../DCCHardware.h"
 
@@ -84,13 +75,10 @@
 //******************************************************************************
 // Direct register access for pin changes
 // Create a structure for each output pin. This structure provides
-// direct access to the ESP32 GPIO registers, using a bitmask.
+// direct access to the ESP32 GPIO register, using a bitmask.
 typedef struct {
-  volatile uint32_t *outset;    // GPIO out set register
-  volatile uint32_t *outclr;    // GPIO out clear register
-  volatile uint32_t *outtgl;    // GPIO out toggle register
-  uint32_t bit;                 // Bitmask for the pin
-  uint8_t enable;               // No pin toggle during RailCom gap / Power-down
+    gpio_num_t pin;        // GPIO number (Arduino pin)
+    uint8_t enable;        // No pin toggle during RailCom gap / Power-down
 } DccOut_t;
 
 // Instantiate three objects; one for each pin (output channel)
@@ -98,33 +86,19 @@ static DccOut_t dccMonitor;   // Create an instance for the dccMonitor
 static DccOut_t dccRail;      // Create an instance for the dccRail
 static DccOut_t dccRailInv;   // Create an instance for the dccRailInv
 
-// Create a dummy pointer address, to avoid problems with null pointers
+// Create a dummy variable to avoid null pointer dereferencing
 static volatile uint32_t gpio_dummy;
 
 inline void initDccPin(DccOut_t &pinObj, uint8_t &arduinoPin) {
   if (GPIO_IS_VALID_OUTPUT_GPIO(arduinoPin)) {
-    pinMode(arduinoPin, OUTPUT);
-    uint8_t gpio = arduinoPin;            // Simply use the Arduino pin
+    pinObj.pin = static_cast<gpio_num_t>(arduinoPin);
     pinObj.enable = false;
-    if (gpio < 32) {
-      pinObj.bit    = (1UL << gpio);
-      pinObj.outset = &GPIO.out_w1ts;
-      pinObj.outclr = &GPIO.out_w1tc;
-      pinObj.outtgl = &GPIO.out;           // toggle via XOR
-      GPIO.out_w1tc = pinObj.bit;          // force LOW
-    } else {
-      pinObj.bit    = (1UL << (gpio - 32));
-      pinObj.outset = &GPIO.out1_w1ts.val;
-      pinObj.outclr = &GPIO.out1_w1tc.val;
-      pinObj.outtgl = &GPIO.out1.val;      // toggle via XOR
-      GPIO.out1_w1tc.val = pinObj.bit;     // force LOW
-    }
+    gpio_reset_pin(pinObj.pin);
+    gpio_set_direction(pinObj.pin, GPIO_MODE_OUTPUT);
+    gpio_set_level(pinObj.pin, 0);     // force LOW
   }
   else {
-    pinObj.outset = &gpio_dummy;
-    pinObj.outclr = &gpio_dummy;
-    pinObj.outtgl = &gpio_dummy;
-    pinObj.bit    = 0;
+    pinObj.pin = GPIO_NUM_MAX;         // invalid pin
     pinObj.enable = false;
     arduinoPin = 0xFF;
   }
@@ -132,16 +106,15 @@ inline void initDccPin(DccOut_t &pinObj, uint8_t &arduinoPin) {
 
 // #defines to set, clear and toggle the output signals
 // Although only some will be used, for completeness all options are given.
-#define DCCOUT_HGH          {*dccRail.outset = dccRail.bit;}
-#define DCCOUT_LOW          {*dccRail.outclr = dccRail.bit;}
-#define DCCOUT_TGL          {*dccRail.outtgl ^= dccRail.bit;}
-#define DCCINV_HGH          {*dccRailInv.outset = dccRailInv.bit;}
-#define DCCINV_LOW          {*dccRailInv.outclr = dccRailInv.bit;}
-#define DCCINV_TGL          {*dccRailInv.outtgl ^= dccRailInv.bit;}
-#define DCCMON_HGH          {*dccMonitor.outset = dccMonitor.bit;}
-#define DCCMON_LOW          {*dccMonitor.outclr = dccMonitor.bit;}
-#define DCCMON_TGL          {*dccMonitor.outtgl ^= dccMonitor.bit;}
-
+#define DCCOUT_HGH   {gpio_set_level(dccRail.pin, 1);}
+#define DCCOUT_LOW   {gpio_set_level(dccRail.pin, 0);}
+#define DCCOUT_TGL   {gpio_set_level(dccRail.pin, !gpio_get_level(dccRail.pin));}
+#define DCCINV_HGH   {gpio_set_level(dccRailInv.pin, 1);}
+#define DCCINV_LOW   {gpio_set_level(dccRailInv.pin, 0);}
+#define DCCINV_TGL   {gpio_set_level(dccRailInv.pin, !gpio_get_level(dccRailInv.pin));}
+#define DCCMON_HGH   {gpio_set_level(dccMonitor.pin, 1);}
+#define DCCMON_LOW   {gpio_set_level(dccMonitor.pin, 0);}
+#define DCCMON_TGL   {gpio_set_level(dccMonitor.pin, !gpio_get_level(dccMonitor.pin));}
 
 // defines to enable / disable the output signals
 #define ENABLE_DCCMON       {dccMonitor.enable = true;}
@@ -154,6 +127,7 @@ inline void initDccPin(DccOut_t &pinObj, uint8_t &arduinoPin) {
 #define DCCOUT_IS_ENABLED   dccRail.enable
 #define DCCINV_IS_ENABLED   dccRailInv.enable
 #define DCCMON_IS_ENABLED   dccMonitor.enable
+
 
 //******************************************************************************
 // Part 2: Timer and ISR
@@ -218,17 +192,6 @@ void disableDccTimer() {
   ESP_ERROR_CHECK(gptimer_del_timer(dccTimer));                    // Delete
   dccTimer = NULL;
 }
-
-
-//******************************************************************************
-// TODO: FOR TESTING
-#define PIN_TEST1   12
-#define PIN_TEST2   13
-#define PIN_TEST3   14
-
-#define DEBUG1 digitalWrite(PIN_TEST1, HIGH); digitalWrite(PIN_TEST1, LOW);
-#define DEBUG2 digitalWrite(PIN_TEST2, HIGH); digitalWrite(PIN_TEST2, LOW);
-#define DEBUG3 digitalWrite(PIN_TEST2, HIGH); digitalWrite(PIN_TEST2, LOW);
 
 
 //******************************************************************************
