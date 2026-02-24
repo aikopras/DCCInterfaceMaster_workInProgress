@@ -52,7 +52,7 @@ typedef struct {
   volatile uint8_t *outclr;   // Pointer naar PORTx.OUTCLR register
   volatile uint8_t *outtgl;   // Pointer naar PORTx.OUTTGL register
   uint8_t bit;                // Bitmask voor de pin
-  uint8_t enable;             // No pin toggle during RailCom gap / Power-down
+  volatile bool enable;       // No pin toggle during RailCom gap / Power-down
 } DccOut_t;
 
 // Instantiate three objects; one for each output signal

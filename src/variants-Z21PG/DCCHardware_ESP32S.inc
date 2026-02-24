@@ -90,7 +90,7 @@ typedef struct {
   volatile uint32_t *outclr;    // GPIO out clear register
   volatile uint32_t *outtgl;    // GPIO out toggle register
   uint32_t bit;                 // Bitmask for the pin
-  uint8_t enable;               // No pin toggle during RailCom gap / Power-down
+  volatile bool enable;         // No pin toggle during RailCom gap / Power-down
 } DccOut_t;
 
 // Instantiate three objects; one for each pin (output channel)

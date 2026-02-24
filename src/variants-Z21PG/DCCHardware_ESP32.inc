@@ -78,7 +78,7 @@
 // direct access to the ESP32 GPIO register, using a bitmask.
 typedef struct {
     gpio_num_t pin;        // GPIO number (Arduino pin)
-    uint8_t enable;        // No pin toggle during RailCom gap / Power-down
+    volatile bool enable;  // No pin toggle during RailCom gap / Power-down
 } DccOut_t;
 
 // Instantiate three objects; one for each pin (output channel)
