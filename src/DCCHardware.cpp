@@ -33,6 +33,10 @@
     #include "variants-Z21PG/DCCHardware_ESP32.inc"
     // #include "variants-Z21PG/DCCHardware_ESP32S.inc"
 
+  // ESP8266 / ESP8285
+  #elif defined(ARDUINO_ARCH_ESP8266)
+    #include "variants-Z21PG/DCCHardware_ESP8266.inc"
+
   // SAMD processors
   #elif defined(ARDUINO_ARCH_SAMD)
     #include "variants-Z21PG/DCCHardware_SAMD_sw_timer.inc"
