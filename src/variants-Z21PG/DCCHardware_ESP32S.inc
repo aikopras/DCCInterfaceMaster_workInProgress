@@ -175,15 +175,15 @@ static bool dccTimerIsr(gptimer_handle_t timer,
 #define one_count       58ULL           // RCN 210
 #define zero_count      100ULL          // RCN 210
 
-// Set the timer alarms for specific DCC timings (µs resolution)
-#define TMR_ONE              setDccTimerAlarm(edata->alarm_value + one_count)
-#define TMR_ZERO             setDccTimerAlarm(edata->alarm_value + zero_count)
-#define TMR_RAILCOM_STARTBIT setDccTimerAlarm(edata->alarm_value + half_one_count)
+#define TMR_ONE              setDccTimerAlarm(one_count)
+#define TMR_ZERO             setDccTimerAlarm(zero_count)
+#define TMR_RAILCOM_STARTBIT setDccTimerAlarm(half_one_count)
 
 static inline void setDccTimerAlarm(uint64_t newAlarmValue) {
   gptimer_alarm_config_t alarmConfig = {};                              // Allocate space
-  alarmConfig.alarm_count = newAlarmValue;                              // One shot
-  alarmConfig.flags.auto_reload_on_alarm = false;                       // automatic reset upon match
+  alarmConfig.reload_count = 0;                                         // Restart CNT from 0
+  alarmConfig.alarm_count = newAlarmValue;                              // Compare Match value
+  alarmConfig.flags.auto_reload_on_alarm = true;                        // automatic reset upon match
   gptimer_set_alarm_action(dccTimer, &alarmConfig);
 }
 
@@ -218,17 +218,6 @@ void disableDccTimer() {
   ESP_ERROR_CHECK(gptimer_del_timer(dccTimer));                    // Delete
   dccTimer = NULL;
 }
-
-
-//******************************************************************************
-// TODO: FOR TESTING
-#define PIN_TEST1   12
-#define PIN_TEST2   13
-#define PIN_TEST3   14
-
-#define DEBUG1 digitalWrite(PIN_TEST1, HIGH); digitalWrite(PIN_TEST1, LOW);
-#define DEBUG2 digitalWrite(PIN_TEST2, HIGH); digitalWrite(PIN_TEST2, LOW);
-#define DEBUG3 digitalWrite(PIN_TEST2, HIGH); digitalWrite(PIN_TEST2, LOW);
 
 
 //******************************************************************************

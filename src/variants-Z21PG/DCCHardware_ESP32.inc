@@ -79,6 +79,7 @@
 typedef struct {
     gpio_num_t pin;        // GPIO number (Arduino pin)
     volatile bool enable;  // No pin toggle during RailCom gap / Power-down
+    volatile bool level;   // The current pin level
 } DccOut_t;
 
 // Instantiate three objects; one for each pin (output channel)
@@ -86,13 +87,12 @@ static DccOut_t dccMonitor;   // Create an instance for the dccMonitor
 static DccOut_t dccRail;      // Create an instance for the dccRail
 static DccOut_t dccRailInv;   // Create an instance for the dccRailInv
 
-// Create a dummy variable to avoid null pointer dereferencing
-static volatile uint32_t gpio_dummy;
 
 inline void initDccPin(DccOut_t &pinObj, uint8_t &arduinoPin) {
   if (GPIO_IS_VALID_OUTPUT_GPIO(arduinoPin)) {
     pinObj.pin = static_cast<gpio_num_t>(arduinoPin);
     pinObj.enable = false;
+    pinObj.level = 0;
     gpio_reset_pin(pinObj.pin);
     gpio_set_direction(pinObj.pin, GPIO_MODE_OUTPUT);
     gpio_set_level(pinObj.pin, 0);     // force LOW
@@ -104,17 +104,37 @@ inline void initDccPin(DccOut_t &pinObj, uint8_t &arduinoPin) {
   }
 }
 
+// Inline functions to set, clear and toggle pins
+// Are used in the defines below
+static inline void setPinHgh(DccOut_t &p) {
+    if (p.pin == GPIO_NUM_MAX) return;
+    p.level = 1;
+    gpio_set_level(p.pin, 1);
+}
+
+static inline void setPinLow(DccOut_t &p) {
+    if (p.pin == GPIO_NUM_MAX) return;
+    p.level = 0;
+    gpio_set_level(p.pin, 0);
+}
+
+static inline void togglePin(DccOut_t &p) {
+  if (p.pin == GPIO_NUM_MAX) return;
+  p.level ^= 1;
+  gpio_set_level(p.pin, p.level);
+}
+
 // #defines to set, clear and toggle the output signals
 // Although only some will be used, for completeness all options are given.
-#define DCCOUT_HGH   {gpio_set_level(dccRail.pin, 1);}
-#define DCCOUT_LOW   {gpio_set_level(dccRail.pin, 0);}
-#define DCCOUT_TGL   {gpio_set_level(dccRail.pin, !gpio_get_level(dccRail.pin));}
-#define DCCINV_HGH   {gpio_set_level(dccRailInv.pin, 1);}
-#define DCCINV_LOW   {gpio_set_level(dccRailInv.pin, 0);}
-#define DCCINV_TGL   {gpio_set_level(dccRailInv.pin, !gpio_get_level(dccRailInv.pin));}
-#define DCCMON_HGH   {gpio_set_level(dccMonitor.pin, 1);}
-#define DCCMON_LOW   {gpio_set_level(dccMonitor.pin, 0);}
-#define DCCMON_TGL   {gpio_set_level(dccMonitor.pin, !gpio_get_level(dccMonitor.pin));}
+#define DCCOUT_HGH          setPinHgh(dccRail)
+#define DCCOUT_LOW          setPinLow(dccRail)
+#define DCCOUT_TGL          togglePin(dccRail)
+#define DCCINV_HGH          setPinHgh(dccRailInv)
+#define DCCINV_LOW          setPinLow(dccRailInv)
+#define DCCINV_TGL          togglePin(dccRailInv)
+#define DCCMON_HGH          setPinHgh(dccMonitor)
+#define DCCMON_LOW          setPinLow(dccMonitor)
+#define DCCMON_TGL          togglePin(dccMonitor)
 
 // defines to enable / disable the output signals
 #define ENABLE_DCCMON       {dccMonitor.enable = true;}
@@ -150,14 +170,15 @@ static bool dccTimerIsr(gptimer_handle_t timer,
 #define zero_count      100ULL          // RCN 210
 
 // Set the timer alarms for specific DCC timings (µs resolution)
-#define TMR_ONE              setDccTimerAlarm(edata->alarm_value + one_count)
-#define TMR_ZERO             setDccTimerAlarm(edata->alarm_value + zero_count)
-#define TMR_RAILCOM_STARTBIT setDccTimerAlarm(edata->alarm_value + half_one_count)
+#define TMR_ONE              setDccTimerAlarm(one_count)
+#define TMR_ZERO             setDccTimerAlarm(zero_count)
+#define TMR_RAILCOM_STARTBIT setDccTimerAlarm(half_one_count)
 
 static inline void setDccTimerAlarm(uint64_t newAlarmValue) {
   gptimer_alarm_config_t alarmConfig = {};                              // Allocate space
-  alarmConfig.alarm_count = newAlarmValue;                              // One shot
-  alarmConfig.flags.auto_reload_on_alarm = false;                       // automatic reset upon match
+  alarmConfig.reload_count = 0;                                         // Restart CNT from 0
+  alarmConfig.alarm_count = newAlarmValue;                              // Compare Match value
+  alarmConfig.flags.auto_reload_on_alarm = true;                        // automatic reset upon match
   gptimer_set_alarm_action(dccTimer, &alarmConfig);
 }
 
