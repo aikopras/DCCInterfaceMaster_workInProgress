@@ -37,9 +37,9 @@ The optional **monitor signal** always carries a continuous DCC signal. It never
 
 [![DCC signals in Z21pg mode](extras/Figures/Z21PG.png)](extras/Figures/Z21PG.png)
 
-In **HQ mode**, the library generates only two output signals: a continuous DCC signal and a separate signal carrying the RailCom cutout (a third monitor signal is not available). The RailCom cutout signal will be disabled after a power-down command. Next to the DCC and RailCom cutout signals, additional signals may be needed to operate a H-bridge; these additional signals are not part of this library. Depending on the type of H-bridge used, external logic may be required to combine these signals into a proper rail output. An example HQ output is shown in the figure below.
+In **HQ mode**, the library generates only two output signals: a continuous DCC signal and a separate signal carrying the RailCom cutout (a third monitor signal is not available). The RailCom cutout signal will be disabled after a power-down command. Next to the DCC and RailCom cutout signals, additional signals may be needed to operate a H-bridge; these additional signals are not part of this library. Depending on the type of H-bridge used, external logic may be required to combine these signals into a proper rail output. An example HQ output is shown in the figure below; details can be found [here](extras/variants-HQ/HQ-mode-details//readme.md).
 
-[![DCC signals in HQ mode](extras/Figures/ESP32-No-RailCom.png)](extras/Figures/ESP32-No-RailCom.png)
+[![DCC signals in HQ mode](extras/Figures/ESP32-With-RailCom.png)](extras/Figures/ESP32-With-RailCom.png)
 
 ---
 
@@ -63,7 +63,7 @@ In addition to 8-bit devices, several **32-bit microcontroller platforms** are s
 
 For **HQ mode**, the library supports the following processors:
 - ESP32, using the RMT for signal generation. See  [DCC Encoding on an ESP32](extras/variants-HQ/ESP32/RMT.md) for details.
-- STM32: coming soon 
+- STM32: coming soon
 
 It should be noted that for **HQ mode** this library is still under active development and therefore not yet complete.
 
