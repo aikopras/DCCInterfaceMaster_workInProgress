@@ -1,4 +1,5 @@
-#define SwitchFormat 0   //ROCO (+4) or IB (+0)
+//#define SwitchFormat 0   //ROCO (+4) or IB (+0)
+#define SwitchFormat 4   // ROCO
 
 DCCPacketScheduler dps;
 
@@ -6,6 +7,7 @@ bool      accessory;
 bool      loco;
 bool      powerSwitching;
 bool      testSM;
+bool      testRCGap;
 uint16_t  accAddress;
 uint16_t  locoAddress;
 long      accTimer;
@@ -51,7 +53,7 @@ bool readSerialCommand(Stream &ser, long &outValue) {
 
 void sendAccessory() {
   if (!accessory) return;
-  if (millis() - accTimer > 100) {
+  if (millis() - accTimer > 1000) {
     accAddress++;
     if (accAddress > 999) accAddress = 0;
     dps.setBasicAccessoryPos(accAddress, 1, true);
@@ -61,30 +63,48 @@ void sendAccessory() {
   
 void sendLoco() {
  if (!loco) return;
-  if (millis() - locoTimer > 100) {
+  if (millis() - locoTimer > 1000) {
     locoAddress++;
-    if (locoAddress > 999) locoAddress = 0;
-    dps.setSpeed(locoAddress, 0);
+    if (locoAddress > 999) locoAddress = 1;
+    dps.setSpeed(locoAddress, 4);
     locoTimer = millis();
   }
 };
 
+
+uint8_t currentPower;
 void powerOnOff(void) {
   if (!powerSwitching) return;
-  if ((millis() - powerTimer) > 1000) {
+  if ((millis() - powerTimer) > 500) {
     powerTimer = millis();
-    digitalWrite(PIN_TEST3, HIGH); digitalWrite(PIN_TEST3, LOW);
-    if (dps.getpower() == OFF) dps.setpower(ON);
-      else dps.setpower(OFF);
+    currentPower = currentPower + 1;
+    if (currentPower >= 3) currentPower = 0;
+    switch (currentPower) {
+      case 0:
+        dps.setpower(OFF);
+      break;  
+      case 1:
+        dps.setpower(ON);
+      break;  
+      case 2:
+        ;
+      break;  
+    }
   }
 }
 
 void startSM(void) {
   if (!testSM) return;
-  if ((millis() - smTimer) > 3000) {
+  if ((millis() - smTimer) > 700) {
     smTimer = millis();
-    digitalWrite(PIN_TEST3, HIGH); 
+//    digitalWrite(14, HIGH); 
     dps.opsVerifyDirectCV(4, 4);
-    digitalWrite(PIN_TEST3, LOW);
+//    digitalWrite(14, LOW);
   }
+}
+
+void showRCGap() {
+  if (!testRCGap) return;
+  if (dccPacketEngine.railComGap()) digitalWriteFast(PIN_TEST1, HIGH);
+//  else digitalWriteFast(PIN_TEST1, LOW);
 }

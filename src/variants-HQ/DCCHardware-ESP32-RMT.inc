@@ -164,7 +164,7 @@ struct DccTxEngine {                      // Processor independent
   aux_pin_t auxPin;                       // Pin for the Power ON/OFF / RailCom cutout
   bool auxPinConfigured;                  // To protect against invalid pin values
   bool auxEnableLevel = 0;                // 0..1: The value of the AUX pin once it is enabled
-  bool auxOutputActive;                   // Flag used by RunOutputSignal / StopOutputSignal
+  bool auxOutputActive = false;           // Flag used by RunOutputSignal / StopOutputSignal
   // Prepared packets
   DccPacket userPacket;                   // Placeholder for the user packet
   DccPacket idlePacket;                   // Precomputed idle packet
@@ -641,7 +641,6 @@ void DccPacketEngine::setupWaveformGenerator() {
   dccTx.isInitialized = true;
 }
 
-
 void DccPacketEngine::send(const uint8_t* data, uint8_t size) {
   // Sends a DCC packet (3–6 bytes including XOR).
   if (size == 0 || size > MaxDccSize) return;   // Illegal packet size
@@ -673,7 +672,7 @@ void DccPacketEngine::enterServiceMode(void) {
 }
 
 void DccPacketEngine::leaveServiceMode(void) {
-  // The current implementation of DCCPacketSchedular calls leaveServiceMode
+  // The current implementation of DCCPacketScheduler calls leaveServiceMode
   // before every packet, and not, as one might expected, only after Service
   // Mode is over.
   if (dccTx.smActive == false) return;

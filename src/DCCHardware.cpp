@@ -31,7 +31,7 @@
   // ESP32 (all)
   #elif defined(ARDUINO_ARCH_ESP32)
     #include "variants-Z21PG/DCCHardware_ESP32.inc"
-    // #include "variants-Z21PG/DCCHardware_ESP32S.inc"
+    //#include "variants-Z21PG/DCCHardware_ESP32S.inc"
 
   // ESP8266 / ESP8285
   #elif defined(ARDUINO_ARCH_ESP8266)
@@ -53,7 +53,7 @@
 
   // AVR DxCore
   #if defined(AVR_DXCORE)
-    #include "variants-HQ/DCCHardware_DxCore_TCA0.inc"
+    #include "variants-HQ/DCCHardware_DxCore.inc"
 
   // ESP32 (all)
   #elif defined(ARDUINO_ARCH_ESP32)
