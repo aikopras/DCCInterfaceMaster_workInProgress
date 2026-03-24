@@ -209,7 +209,7 @@ void DccPacketEngine::send(const uint8_t* data, uint8_t size) {
   if (size == 0 || size > MaxDccSize) return;   // Illegal packet size
   // Check if this is a SM packet
   // RCN-216: Service Mode packets have 0111xxxx as first byte
-  dccISR.isServiceModePacket = (data[0] & 0xF0) == 0b01110000;
+  dccISR.isServiceModePacket = dccISR.smActive && ((data[0] & 0xF0) == 0b01110000);
   // Copy the received data to nextPacket
   noInterrupts();
   for (uint8_t i = 0; i < size; i++) dccISR.nextPacket[i] = data[i];

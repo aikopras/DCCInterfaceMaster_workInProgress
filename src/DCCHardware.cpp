@@ -1,6 +1,6 @@
 #include <Arduino.h>
 
-#define Z21PG
+//#define Z21PG
 
 // Create a define for all DxCore variants, to improve readability
 #if defined(__AVR_DA__) || defined(__AVR_DB__) || defined(__AVR_DD__) || \
@@ -37,9 +37,9 @@
   #elif defined(ARDUINO_ARCH_ESP8266)
     #include "variants-Z21PG/DCCHardware_ESP8266.inc"
 
-  // SAMD processors
-  #elif defined(ARDUINO_ARCH_SAMD)
-    #include "variants-Z21PG/DCCHardware_SAMD_sw_timer.inc"
+  // STM32
+  #elif defined(ARDUINO_ARCH_STM32)
+    #include "variants-Z21PG/DCCHardware_stm32F4H7xx.inc"
 
   // Others
   #else
@@ -58,6 +58,14 @@
   // ESP32 (all)
   #elif defined(ARDUINO_ARCH_ESP32)
     #include "variants-HQ/DCCHardware-ESP32-RMT.inc"
+
+  // RP2040 / RP2350 (PIO + DMA)
+  #elif defined(ARDUINO_ARCH_RP2040)
+    #include "variants-HQ/DCCHardware-RP-PICO.inc"
+
+  // STM32
+  #elif defined(ARDUINO_ARCH_STM32)
+    #include "variants-HQ/DCCHardware-STM_Generic.inc"
 
   // Others
   #else

@@ -121,6 +121,7 @@
     defined(ARDUINO_ARCH_RP2040) || \
     defined(ARDUINO_ARCH_SAM)    || \
     defined(ARDUINO_ARCH_MBED)   || \
+    defined(ARDUINO_ARCH_RP2040) || \
     defined(__AVR_DA__) || defined(__AVR_DB__) || defined(__AVR_DD__)
     #define AccessoryMax 4096
     #define SlotMax 255

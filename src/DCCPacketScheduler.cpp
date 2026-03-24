@@ -24,7 +24,12 @@ DueFlashStorage DueFlash;
 #elif defined(ESP32) //ESP32 only!
 #include "z21nvs.h"
 z21nvsClass EEPROMDCC;
-#define FSTORAGE EEPROMDCC
+#define FSTORAGE  EEPROMDCC
+#define FSTORAGEMODE write
+
+#elif defined(ARDUINO_ARCH_RP2040)
+#include <EEPROM.h>
+#define FSTORAGE  EEPROM
 #define FSTORAGEMODE write
 
 #else
@@ -137,19 +142,24 @@ void DCCPacketScheduler::disable_additional_DCC_output(void)
 //---------------------------------------------------------------------------------
 void DCCPacketScheduler::loadEEPROMconfig(void)
 {
+  #if defined(ARDUINO_ARCH_RP2040)
+    EEPROM.begin(256);                         // EEPROM size
+  #endif
+
 	if (FSTORAGE.read(EEPROMRailCom) > 1)
 		FSTORAGE.FSTORAGEMODE(EEPROMRailCom,0x01);	//Default activ
 
 	if (FSTORAGE.read(EEPROMProgReadMode) > 3)
 		FSTORAGE.FSTORAGEMODE(EEPROMProgReadMode,0x03);	//Default "Beides"
 
-	if ((FSTORAGE.read(EEPROMProgRepeat) > 64) | (FSTORAGE.read(EEPROMRSTcRepeat) > 64)) {
+	// if ((FSTORAGE.read(EEPROMProgRepeat) > 64) | (FSTORAGE.read(EEPROMRSTcRepeat) > 64)) {  // AP 2026
+  if ((FSTORAGE.read(EEPROMProgRepeat) < 7) || (FSTORAGE.read(EEPROMProgRepeat) > 64)) {
 		FSTORAGE.FSTORAGEMODE(EEPROMProgRepeat,OPS_MODE_PROGRAMMING_REPEAT);	//range 7-64
 		FSTORAGE.FSTORAGEMODE(EEPROMRSTsRepeat,RESET_START_REPEAT);		//range 25-255
 		FSTORAGE.FSTORAGEMODE(EEPROMRSTcRepeat,RESET_CONT_REPEAT);		//range 6-64
 	}
 
-	#if defined(ESP8266) || defined(ESP32) //ESP8266 or ESP32
+	#if defined(ESP8266) || defined(ESP32) || defined(ARDUINO_ARCH_RP2040) //ESP8266, ESP32 or RP2040/2350
 	FSTORAGE.commit();
 	#endif
 
