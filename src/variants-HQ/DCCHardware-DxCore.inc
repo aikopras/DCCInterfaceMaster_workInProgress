@@ -407,7 +407,7 @@ ISR(TCD0_OVF_vect) {
 //                               D: TCA Transmission Engine
 //================================================================================================
 // Everything related to TCA initialisation is put in a separate file
-#include "DCCHardware_DxCore_TCA0.inc"
+#include "DCCHardware-DxCore-TCA0.inc"
 
 
 static inline void setPinInverted(volatile uint8_t* pinCtrlReg, bool inverted) {
@@ -434,30 +434,24 @@ static inline void procesNextPacket() {
       // Switch ISR to the buffer that was just filled by send():
       // sendPacketIndex has already been toggled in send(), so "ready" is the other one.
       dccTx.isrPacketIndex = dccTx.sendPacketIndex ^ 1;
-      selectTransmitPacket(&dccTx.userPacket[dccTx.isrPacketIndex]);
+      transmitNextPacket(&dccTx.userPacket[dccTx.isrPacketIndex]);
       dccTx.userPacketReady = false;
       if (dccTx.isServiceModePacket) {                          // set in send()
         dccTx.smRepeatsRemaining = dccTx.smMaxRepeats;          // initialise
-      } else {
-        // Part 1B: No SM packet, so no retransmission needed
-        dccPacketEngine.canAcceptPacket = true;
       }
     } else {
       // No new packet: send the default packet
-      selectTransmitPacket(dccTx.defaultPacket);
+      transmitNextPacket(dccTx.defaultPacket);
     }
   } else {
     // Part 2: We are in SM and have to repeat the message
-    selectTransmitPacket(&dccTx.userPacket[dccTx.isrPacketIndex]);
+    transmitNextPacket(&dccTx.userPacket[dccTx.isrPacketIndex]);
     // Decrement counter (Note: decrease is atomic operation)
     uint8_t repeats = dccTx.smRepeatsRemaining;
     if (repeats > 0) dccTx.smRepeatsRemaining = repeats - 1;
-    if (dccTx.smRepeatsRemaining == 0) {
-      dccPacketEngine.canAcceptPacket = true;
-    }
   }
+  if (dccTx.smRepeatsRemaining == 0) dccPacketEngine.canAcceptPacket = true;
 }
-
 
 ISR(DCCHandler) {
   // The ISR is called after a complete DCC bit was generated
@@ -526,7 +520,7 @@ void DccPacketEngine::send(const uint8_t* data, uint8_t size) {
   DccPacket& packet = dccTx.userPacket[index];
   // Check if this is a Service Mode packet
   // RCN-216: Service Mode packets have 0111xxxx as first byte
-  dccTx.isServiceModePacket = (data[0] & 0xF0) == 0b01110000;
+  dccTx.isServiceModePacket = dccTx.smActive && ((data[0] & 0xF0) == 0b01110000);
   // Build the packet into the selected buffer
   int i = 0;                                      // counter within the packet buffer
   pushPreamble(packet.symbols, i);

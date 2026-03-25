@@ -648,7 +648,7 @@ void DccPacketEngine::send(const uint8_t* data, uint8_t size) {
     canAcceptPacket = false;
     // Check if this is a SM packet
     // RCN-216: Service Mode packets have 0111xxxx as first byte
-    dccTx.isServiceModePacket = (data[0] & 0xF0) == 0b01110000;
+    dccTx.isServiceModePacket = dccTx.smActive && ((data[0] & 0xF0) == 0b01110000);
     // Copy the received data to nextPacket
     int i = 0;                               // counter within the userPacket buffer
     pushPreamble(dccTx.userPacket.symbols, i);
