@@ -59,13 +59,15 @@ The set of supported microcontrollers depends on the selected operating mode.
 
 For **Z21pg mode**, the library supports a wide range of processors. This includes traditional 8-bit Arduino ATmega microcontrollers such as the **ATmega328** (used in Arduino UNO and NANO boards) and the **ATmega2560** (Arduino Mega). Newer 8-bit ATmega devices are also supported, including the **AVR-DA** and **AVR-DB** families as provided by the DxCore platform.
 
-In addition to 8-bit devices, several **32-bit microcontroller platforms** are supported in Z21pg mode, including the **ESP32**, **ESP8266**, **SAMD**, and **STM32** families.
+In addition to 8-bit devices, several **32-bit microcontroller platforms** are supported in Z21pg mode, including the **ESP32**, **ESP8266**, and **STM32** families.
 
 For **HQ mode**, the library supports the following processors:
-- ESP32, using the RMT for signal generation. See  [DCC Encoding on an ESP32](extras/variants-HQ/ESP32/RMT.md) for details.
-- STM32: coming soon
+- **DxCore** (AVRxxDA/ AVRxxDB etc), using TCA0 for signal generation. See [DxCore and DCC ](extras/variants-HQ/DxCore/DxCore.md) for details.
+- **STM32** (STM32F4xx, STM32H7xx), using Timer3 for signal generation. See [STM32 and DCC ](extras/variants-HQ/STM32/STM32.md) for details.
+- **ESP32** (all variants), using the RMT for signal generation. See [ESP32 and DCC](extras/variants-HQ/ESP32/RMT.md) for details.
+- **RP2040/2350**, using the PIO for signal generation. See [RP2040 and DCC](extras/variants-HQ/RP2040/RP2040.md) for details.
 
-It should be noted that for **HQ mode** this library is still under active development and therefore not yet complete.
+For new designs, **HQ mode** drivers are recommended, due to **superior DCC signal generation**. This is particularly true for the Raspberry RP2040/2350 processors, followed by STM32, DxCore and (due to inter-packet jitter) ESP32.
 
 ---
 

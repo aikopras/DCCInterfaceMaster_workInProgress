@@ -159,7 +159,7 @@ inline void initDccPinAF(DccOut_t &pinObj, uint8_t arduinoPin, uint8_t af)
  * ========================================================= */
 #define TICKS_PER_US        1           // TIM @ 1 MHz
 #define DCC_HALF_1_US       58
-#define DCC_HALF_0_US       116
+#define DCC_HALF_0_US       100
 #define DCC_HALF_BIT_US     29
 #define RAILCOMCUTOUT       480
 #define PREAMBLE_BITS       16

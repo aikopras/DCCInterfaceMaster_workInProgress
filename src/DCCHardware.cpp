@@ -1,6 +1,6 @@
 #include <Arduino.h>
 
-//#define Z21PG
+#define Z21PG
 
 // Create a define for all DxCore variants, to improve readability
 #if defined(__AVR_DA__) || defined(__AVR_DB__) || defined(__AVR_DD__) || \
@@ -53,7 +53,7 @@
 
   // AVR DxCore
   #if defined(AVR_DXCORE)
-    #include "variants-HQ/DCCHardware_DxCore.inc"
+    #include "variants-HQ/DCCHardware-DxCore.inc"
 
   // ESP32 (all)
   #elif defined(ARDUINO_ARCH_ESP32)
@@ -65,7 +65,7 @@
 
   // STM32
   #elif defined(ARDUINO_ARCH_STM32)
-    #include "variants-HQ/DCCHardware-STM_Generic.inc"
+    #include "variants-HQ/DCCHardware-STM32-Generic.inc"
 
   // Others
   #else
