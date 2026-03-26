@@ -71,6 +71,11 @@ For new designs, **HQ mode** drivers are recommended, due to **superior DCC sign
 
 ---
 
+## Library usage
+
+Details on how to call this library from your Arduino code can be found [here](extras/Scheduler.md).
+
+---
 
 ## Installation
 
