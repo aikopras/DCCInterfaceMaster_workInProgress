@@ -67,7 +67,7 @@ For **HQ mode**, the library supports the following processors:
 - **ESP32** (all variants), using the RMT for signal generation. See [ESP32 and DCC](extras/variants-HQ/ESP32/RMT.md) for details.
 - **RP2040/2350**, using the PIO for signal generation. See [RP2040 and DCC](extras/variants-HQ/RP2040/RP2040.md) for details.
 
-For new designs, **HQ mode** drivers are recommended, due to **superior DCC signal generation**. This is particularly true for the Raspberry RP2040/2350 processors, followed by STM32, DxCore and (due to inter-packet jitter) ESP32.
+For new designs, **HQ mode** drivers are recommended, due to **superior DCC signal generation**. This is particularly true for the Raspberry RP2040/2350 processors, followed by STM32, DxCore and (due to inter-packet jitter) ESP32. See [suitability of various processors for DCC generation](extras/variants-HQ/HQ-mode-comparison/comparison.md) for a comparison.
 
 ---
 
