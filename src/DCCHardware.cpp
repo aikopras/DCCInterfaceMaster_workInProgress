@@ -37,6 +37,10 @@
   #elif defined(ARDUINO_ARCH_ESP8266)
     #include "variants-Z21PG/DCCHardware_ESP8266.inc"
 
+  // RP2040 / RP2350 (PIO + DMA)
+  #elif defined(ARDUINO_ARCH_RP2040)
+    #include "variants-Z21PG/DCCHardware_RP.inc"
+
   // STM32
   #elif defined(ARDUINO_ARCH_STM32)
     #include "variants-Z21PG/DCCHardware_stm32F4H7xx.inc"
